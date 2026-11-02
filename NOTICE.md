@@ -5,6 +5,10 @@ It has not been reviewed line by line by a human.
 # License and provenance
 
 nixiz is distributed under GPL-2.0-only; see [COPYING](COPYING).
+COPYING includes the complete GPL version 2 text, copied without modification
+from the upstream `LICENSES/GPL-2.0` license-text section. The inherited upstream
+COPYING notice declared GPL-2.0-only and referred to that file; the license choice
+is unchanged.
 
 The initial controller, SSH handling, progress and receipt code, secret resolver,
 transaction engine and regression cases are derived from the OpenWrt tooling in
