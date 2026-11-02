@@ -48,6 +48,19 @@ class BackupHook(unittest.TestCase):
         self.assertEqual(result.returncode == 0, success, result.stderr)
         return result
 
+    def test_package_hooks_preserve_foreign_lifecycle_fence(self):
+        lifecycle = SOURCE.parents[2] / 'usr/libexec/nixiz/package-lifecycle'
+        script = lifecycle.read_text().replace('root=/etc/nixiz', 'root=' + shlex.quote(str(self.root / 'etc/nixiz')))
+        script = script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'PATH=' + shlex.quote(os.environ['PATH']))
+        self.put('lifecycle.sh', script)
+        self.put('etc/nixiz/package-operation', 'fixture-migration\n')
+        for action in ('prepare-commit', 'prepare-install', 'prepare-remove', 'finish-install', 'finish-commit'):
+            with self.subTest(action=action):
+                result = subprocess.run(['/bin/sh', str(self.root / 'lifecycle.sh'), action], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('foreign_operation_pending', result.stderr)
+                self.assertEqual((self.root / 'etc/nixiz/package-operation').read_text(), 'fixture-migration\n')
+
     def test_pending_first_enrollment_without_ledger_is_rejected(self):
         self.status('staged')
         self.assertIn('transaction_pending', self.run_hook(False).stderr)

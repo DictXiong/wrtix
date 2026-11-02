@@ -1,0 +1,6 @@
+{
+  "release": "25.12.0",
+  "target": "x86/64",
+  "url": "https://downloads.openwrt.org/releases/25.12.0/targets/x86/64/openwrt-25.12.0-x86-64-generic-ext4-combined.img.gz",
+  "sha256": "7f33f26f89a7096aa549ec45aa80e07577a3e69c725772a5fa4b8c18df38aeaa"
+}
