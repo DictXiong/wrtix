@@ -218,7 +218,7 @@ class TransportTests(unittest.TestCase):
 
     def test_no_runtime_upload_or_default_password(self):
         compiled = compile_node()
-        contract = {"profile": "nixiz-v1", "identity": {"device_id": "node"},
+        contract = {"profile": "nixiz-v2", "identity": {"device_id": "node"},
                     "contract_sha256": compiled["contract_sha256"], "engine_sha256": "a" * 64, "guard_sha256": "b" * 64}
         with self.transport() as transport, patch.object(transport, "run", return_value=json.dumps(contract).encode()) as run:
             transport.ensure_engine()
@@ -234,6 +234,14 @@ class TransportTests(unittest.TestCase):
                     transport.agent_preflight()
                 contract["identity"]["device_id"] = ""
                 self.assertEqual(transport.agent_preflight(allow_initialize=True), contract)
+
+    def test_protocol_requires_current_package_agent(self):
+        self.assertNotIn("native_runtime", compile_node())
+        with self.transport() as transport, patch.object(transport, "run", return_value=json.dumps({
+                "profile":"nixiz-v1", "identity":{"device_id":"node"},
+                "contract_sha256":"a"*64,"engine_sha256":"b"*64,"guard_sha256":"c"*64}).encode()):
+            with self.assertRaisesRegex(openwrt.DeployError, "incompatible"):
+                transport.agent_contract()
 
     def test_runtime_hashes_are_bound_to_transaction(self):
         compiled = compile_node()
@@ -313,7 +321,7 @@ class PortHandoffTests(unittest.TestCase):
         openwrt.verify_reboot_fallback(args,1,{"reboot_required":True,"state":"applied","reboot_state":"required"})
         openwrt.verify_reboot_fallback(args,0,{"state":"confirmed"})
 
-    def test_legacy_receipt_keeps_single_port_and_invalid_port_fails(self):
+    def test_receipt_without_handoff_uses_one_port_and_invalid_port_fails(self):
         args=connection_args(command="status")
         self.assertEqual(openwrt.receipt_endpoints(args,{"host":"router","port":2200}),[("router",2200)])
         for field in ("initial_port","post_switch_port","port"):
@@ -341,10 +349,13 @@ class PortHandoffTests(unittest.TestCase):
         for valid in (True,False):
             def call(transport,action):
                 return {**status,"token":TOKEN if valid or transport.port==22 else 'b'*32}
-            with contextlib.ExitStack() as stack, patch.object(openwrt.Transport,'call',call), patch.object(openwrt.time,'time',return_value=0):
+            with contextlib.ExitStack() as stack, patch.object(openwrt.Transport,'call',call), \
+                    patch.object(openwrt.Transport,'agent_preflight',return_value={'boot_id':BOOT}) as identity, \
+                    patch.object(openwrt.time,'time',return_value=0):
                 if valid:
                     post,_=openwrt.wait_post_switch(initial,self.receipt(),1,stack)
                     self.assertEqual(post.port,12022)
+                    identity.assert_called_once()
                 else:
                     with self.assertRaisesRegex(openwrt.DeployError,'identity differs'):
                         openwrt.wait_post_switch(initial,self.receipt(),1,stack)
@@ -359,7 +370,7 @@ class PortHandoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(openwrt.Transport,'call',call), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             path=Path(tmp)/'receipt.json'
-            receipt=self.receipt(schema_version=1,protocol='nixiz-v1')
+            receipt=self.receipt(schema_version=1,protocol='nixiz-v2')
             path.write_text(json.dumps(receipt))
             openwrt.main(['status','--receipt',str(path),'--quiet'])
             saved=json.loads(path.read_text())

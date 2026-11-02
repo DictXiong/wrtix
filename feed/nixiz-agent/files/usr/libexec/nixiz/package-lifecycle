@@ -80,7 +80,7 @@ case "${1:-}" in
   cp -p "$marker" "$marker.saved.$$"
   trap '[ ! -f "$marker.saved.$$" ] || mv "$marker.saved.$$" "$marker"' EXIT HUP INT TERM
   rm "$marker"
-  if ! "$agent" identity | jq -e '.profile=="nixiz-v1" and (.contract_sha256|type=="string" and length==64)' >/dev/null; then
+  if ! "$agent" identity | jq -e '.profile=="nixiz-v2" and (.contract_sha256|type=="string" and length==64)' >/dev/null; then
    mv "$marker.saved.$$" "$marker"
    fail runtime_identity_failed
   fi

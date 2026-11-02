@@ -108,7 +108,7 @@ agent_ready() {
 agent_identity() {
  local device_id= board_name= contract=$(p /usr/share/nixiz/contract.json) password=true resolver=true
  agent_ready
- jq -e '.schema_version==1 and .profile=="nixiz-v1"' "$contract" >/dev/null || fail incompatible_agent
+ jq -e '.schema_version==1 and .profile=="nixiz-v2"' "$contract" >/dev/null || fail incompatible_agent
  if [ -e "$(p /etc/nixiz/identity.json)" ]; then
   regular_or_absent etc/nixiz/identity.json || fail invalid_identity
   [ "$(file_mode "$(p /etc/nixiz/identity.json)")" = 600 ] || fail invalid_identity
@@ -125,11 +125,11 @@ agent_identity() {
    [ -L "$(p /etc/resolv.conf)" ] && [ "$(readlink "$(p /etc/resolv.conf)")" = "$target" ] || resolver=false
   fi
  fi
- jq -cn --arg id "$device_id" --arg board "$board_name" --arg boot "$(boot)" --arg contract "$(sha "$contract")" --arg engine "$(sha "$SELF")" --arg guard "$(sha "$GUARD")" --argjson password "$password" --argjson resolver "$resolver" '{schema_version:1,profile:"nixiz-v1",identity:{device_id:$id,board_name:$board},boot_id:$boot,contract_sha256:$contract,engine_sha256:$engine,guard_sha256:$guard,root_password_synced:$password,resolver_correct:$resolver}'
+ jq -cn --arg id "$device_id" --arg board "$board_name" --arg boot "$(boot)" --arg contract "$(sha "$contract")" --arg engine "$(sha "$SELF")" --arg guard "$(sha "$GUARD")" --argjson password "$password" --argjson resolver "$resolver" '{schema_version:1,profile:"nixiz-v2",identity:{device_id:$id,board_name:$board},boot_id:$boot,contract_sha256:$contract,engine_sha256:$engine,guard_sha256:$guard,root_password_synced:$password,resolver_correct:$resolver}'
 }
 reload_error_code() {
  case "$1" in
- finalize_failed|initialization_access_changed|initialization_access_restore_failed|root_password_sync_failed|invalid_manifest|invalid_service_backup|token_mismatch|orphan_reload_child_would_not_stop|restored_network_not_ready|post_reboot_readback_failed|service_disable_failed|service_enable_failed|service_start_failed|service_stop_failed|service_reload_failed|service_restore_failed|service_state_unavailable|service_readback_failed|service_restore_readback_failed|wireless_reload_failed|invalid_network_restart_state|invalid_reboot_state|invalid_lease|invalid_token|no_transaction|missing_native_runtime|agent_check_failed|unsafe_service_link|service_link_read_failed|service_snapshot_failed|unsafe_install_path|unsafe_lock|unsafe_resolver_type|reload_worker_failed|postrollback_check_failed|preconfirm_check_failed) return 0;;
+ initialization_access_changed|root_password_sync_failed|invalid_manifest|invalid_service_backup|token_mismatch|orphan_reload_child_would_not_stop|restored_network_not_ready|post_reboot_readback_failed|service_disable_failed|service_enable_failed|service_start_failed|service_stop_failed|service_reload_failed|service_restore_failed|service_state_unavailable|service_readback_failed|service_restore_readback_failed|wireless_reload_failed|invalid_network_restart_state|invalid_reboot_state|invalid_lease|invalid_token|no_transaction|missing_agent_runtime|agent_check_failed|unsafe_service_link|service_link_read_failed|service_snapshot_failed|unsafe_install_path|unsafe_lock|unsafe_resolver_type|reload_worker_failed|postrollback_check_failed|preconfirm_check_failed) return 0;;
  *) return 1;;
  esac
 }
@@ -158,8 +158,8 @@ reload_failure() {
  if ! plain "$file"; then printf 'null\n'; return; fi
  code=$(jq -er .code "$file" 2>/dev/null) && reload_error_code "$code" && jq -ce --arg phase "$1" '
   select(type=="object" and (keys|sort)==["action","code","exit_code","exit_kind","kind","phase","service"] and .phase==$phase and
-   (.kind==null or .kind=="service" or .kind=="native" or .kind=="bootstrap" or .kind=="wireless" or .kind=="worker") and
-   (.action==null or .action=="start" or .action=="stop" or .action=="enable" or .action=="disable" or .action=="reload" or .action=="restart" or .action=="finalize" or .action=="sync-root-password") and
+   (.kind==null or .kind=="service" or .kind=="wireless" or .kind=="worker") and
+   (.action==null or .action=="start" or .action=="stop" or .action=="enable" or .action=="disable" or .action=="reload" or .action=="restart") and
    (.service==null or (.service|type=="string" and length>0 and length<=64 and (explode as $c | $c[0]!=43 and $c[0]!=45 and $c[0]!=46 and
     all($c[]; (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122) or .==95 or .==43 or .==45 or .==46)))) and
    (.exit_code==null or (.exit_code|type=="number" and floor==. and .>=0 and .<=255)) and
@@ -249,21 +249,17 @@ request_paths() {
  if jq -e '.paths|index("etc/nixiz/root-password-hash")!=null' "$1" >/dev/null; then printf '%s\n' etc/shadow; fi
 }
 check_request() {
- jq -se 'length==1 and (.[0]|type=="object" and (.native_runtime|type=="boolean") and (.paths|type=="array" and length<=128 and all(.[];type=="string" and length>0)) and (.services|type=="array" and length<=128 and all(.[];type=="string")) and (.paths|length==(unique|length)) and (.services|length==(unique|length)))' "$1" >/dev/null 2>&1 || fail invalid_check_request
+ jq -se 'length==1 and (.[0]|type=="object" and keys==["paths","services"] and (.paths|type=="array" and length<=128 and all(.[];type=="string" and length>0)) and (.services|type=="array" and length<=128 and all(.[];type=="string")) and (.paths|length==(unique|length)) and (.services|length==(unique|length)))' "$1" >/dev/null 2>&1 || fail invalid_check_request
  local rel paths
  paths=$(jq -r '.paths[]' "$1") || fail invalid_check_request
  printf '%s\n' "$paths" | while IFS= read -r rel; do [ -z "$rel" ] || allowed "$rel" || fail unsafe_path; done
 }
 snapshot() {
- local request=$1 work contract services resolver profile rel digest mode boot_id ledger=null
+ local request=$1 work contract services resolver rel digest mode boot_id ledger=null
  check_request "$request"
  agent_ready
  work=$(mktemp -d "$(p /tmp)/openwrt-check.XXXXXX") || fail snapshot_workspace_failed
  contract=$(agent_identity) || { rm -rf "$work"; return 1; }
- profile=$(jq -r .native_runtime "$request") || fail invalid_check_request
- if [ "$profile" = true ]; then
-  agent_ready
- fi
  request_paths "$request" > "$work/raw-paths" || fail file_snapshot_failed
  sort -u "$work/raw-paths" > "$work/paths" || fail file_snapshot_failed
  while IFS= read -r rel; do
@@ -274,8 +270,7 @@ snapshot() {
   else jq -cn --arg path "$rel" '{key:$path,value:{sha256:null,mode:null}}' || fail file_snapshot_failed; fi
  done < "$work/paths" > "$work/files"
  services=$(snapshot_services "$request") || { rm -rf "$work"; return 1; }
- resolver=null
- if [ "$profile" = true ]; then resolver=$(resolver_state) || fail resolver_snapshot_failed; fi
+ resolver=$(resolver_state) || fail resolver_snapshot_failed
  if plain "$(p /$LEDGER)"; then
   ledger=$(jq -ce 'select(.schema_version==1 and .kind=="nixiz-owned-resources" and (.files|type)=="array")' "$(p /$LEDGER)") || { rm -rf "$work"; fail invalid_owned_ledger; }
  fi
@@ -351,10 +346,11 @@ valid_manifest() {
  jq -se '
  def hex: type=="string" and length==64 and (explode|all(.[];(.>=48 and .<=57)or(.>=97 and .<=102)));
  length==1 and (.[0] | .schema_version==1 and .kind=="nixiz-transaction" and
+ ((keys-["schema_version","kind","token","boot_id","device_id","board_names","contract_sha256","resolver_target","ttl_seconds","initialize","baseline","files","services","managed_services","changed_paths","engine_sha256","guard_sha256","root_password_managed","checks"])|length==0) and
  (.token|type=="string" and length==32 and (explode|all(.[];(.>=48 and .<=57)or(.>=97 and .<=102)))) and
  (.boot_id|type=="string" and length==36) and (.engine_sha256|hex) and (.guard_sha256|hex) and (.device_id|type=="string" and length>=1 and length<=64) and
- (.native_runtime|type=="boolean") and (.resolver_target==null or (.native_runtime==true and (.resolver_target|type)=="string")) and (if has("initialize") then (.initialize|type=="boolean") else true end) and
- ((.initialize//false)==false or .native_runtime==true) and (if has("board_names") then (.board_names|type=="array" and all(.[];type=="string")) else true end) and
+ (.resolver_target==null or (.resolver_target|type)=="string") and (if has("initialize") then (.initialize|type=="boolean") else true end) and
+ (if has("board_names") then (.board_names|type=="array" and all(.[];type=="string")) else true end) and
  (.ttl_seconds|type=="number" and floor==. and .>=60 and .<=7200) and
  (.baseline|type=="object" and (.files|type=="object") and (.modes|type=="object") and (.services|type=="object")) and
  (.files|type=="array" and length<=128 and
@@ -383,7 +379,7 @@ valid_manifest() {
  resolver=$(jq -r '.resolver_target//empty' "$1") || fail invalid_manifest
  [ -z "$resolver" ] || valid_resolver_target "$resolver" || fail invalid_manifest
 }
-manifest_request() { jq '{paths:[.files[].path],services:(.services|keys),native_runtime}' "$1"; }
+manifest_request() { jq '{paths:[.files[].path],services:(.services|keys)}' "$1"; }
 baseline_matches() {
  local file=$1 work actual
  work=$(mktemp "$(p /tmp)/openwrt-request.XXXXXX")
@@ -466,10 +462,8 @@ backup_files() {
  jq -s . "$STATE/before.jsonl" > "$STATE/before.json"
  jq .services "$STATE/manifest.json" >/dev/null
  jq .services "$STATE/baseline.json" > "$STATE/services.before"
- if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then
-  resolver_state > "$STATE/resolver.before"
-  [ "$(jq -r .type "$STATE/resolver.before")" != file ] || cp -p "$(p /etc/resolv.conf)" "$STATE/resolver.data"
- fi
+ resolver_state > "$STATE/resolver.before"
+ [ "$(jq -r .type "$STATE/resolver.before")" != file ] || cp -p "$(p /etc/resolv.conf)" "$STATE/resolver.data"
 }
 network_mac_signature() {
  local source=$1 directory=$2 section kind address name result has_mac
@@ -508,10 +502,8 @@ network_mac_signature() {
  jq -sc 'if (group_by([.kind,.name])|any(.[];length>1 and any(.[];.macaddr!=null))) then error("ambiguous MAC owner") else map(select(.macaddr!=null))|sort_by(.kind,.name) end' "$directory/rows" 2>/dev/null
 }
 prepare_network_mac_restart() {
- local old= new= index payload digest result enabled changed work=$STATE/network-mac-check.$$
+ local old= new= index payload digest result changed work=$STATE/network-mac-check.$$
  record network-mac-restart false
- enabled=$(jq -r .native_runtime "$STATE/manifest.json") || fail network_mac_check_failed
- [ "$enabled" = true ] || return 0
  changed=$(jq -r 'index("etc/config/network")!=null' "$STATE/changed-paths.json") || fail network_mac_check_failed
  [ "$changed" = true ] || return 0
  index=$(jq -r '.[]|select(.path=="etc/config/network" and .present)|.index' "$STATE/before.json") || fail network_mac_check_failed
@@ -567,7 +559,6 @@ prepare_reboot() {
  local changed index payload old= new= work=$STATE/wireless-mac-check.$$
  prepare_network_mac_restart
  record reboot-required false
- [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ] || return 0
  if network_mac_restart network; then record reboot-required true; fi
  changed=$(jq -r 'index("etc/config/wireless")!=null' "$STATE/changed-paths.json") || fail wireless_mac_check_failed
  [ "$changed" = true ] || return 0
@@ -677,18 +668,16 @@ validate_backups() {
    case "$target" in "../init.d/$name"|"/etc/init.d/$name") :;; *) fail invalid_service_backup;; esac
   done
  done < "$STATE/service-validation.names"
- if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then
-  plain "$STATE/resolver.before" || fail resolver_backup_corrupt
-  kind=$(jq -er .type "$STATE/resolver.before") || fail resolver_backup_corrupt
-  case "$kind" in
-   file)
-    plain "$STATE/resolver.data" && [ "$(sha "$STATE/resolver.data")" = "$(jq -r .sha256 "$STATE/resolver.before")" ] && [ "$(file_mode "$STATE/resolver.data")" = "$(jq -r .mode "$STATE/resolver.before")" ] || fail resolver_backup_corrupt;;
-   symlink)
-    target=$(jq -er .target "$STATE/resolver.before") || fail resolver_backup_corrupt
-    valid_saved_resolver_target "$target" || fail resolver_backup_corrupt;;
-   absent) :;; *) fail resolver_backup_corrupt;;
-  esac
- fi
+ plain "$STATE/resolver.before" || fail resolver_backup_corrupt
+ kind=$(jq -er .type "$STATE/resolver.before") || fail resolver_backup_corrupt
+ case "$kind" in
+  file)
+   plain "$STATE/resolver.data" && [ "$(sha "$STATE/resolver.data")" = "$(jq -r .sha256 "$STATE/resolver.before")" ] && [ "$(file_mode "$STATE/resolver.data")" = "$(jq -r .mode "$STATE/resolver.before")" ] || fail resolver_backup_corrupt;;
+  symlink)
+   target=$(jq -er .target "$STATE/resolver.before") || fail resolver_backup_corrupt
+   valid_saved_resolver_target "$target" || fail resolver_backup_corrupt;;
+  absent) :;; *) fail resolver_backup_corrupt;;
+ esac
 }
 restore_locked() {
  local reason=$1 rel present index
@@ -705,7 +694,7 @@ restore_locked() {
    mv "$(p /$rel).openwrt-restore.$$" "$(p /$rel)"
   else rm -f "$(p /$rel)"; fi
  done < "$STATE/restore-files.tsv"
- if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then resolver_restore; fi
+ resolver_restore
  restore_service_links
  # Retire candidate completion before publishing rollback to unlocked readers.
  rm -f "$STATE/reload-complete"
@@ -786,13 +775,11 @@ current_matches() {
  [ "$ledger_digest" = "$expected_digest" ] || return 1
  if activation_deferred; then desired_services_match enabled || return 1
  else desired_services_match || return 1; fi
- if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then
-  resolver_matches || return 1
-  root_password_matches || return 1
-  if [ -f "$STATE/helpers.after" ]; then
-   helpers_snapshot > "$STATE/helpers.current" || return 1
-   cmp -s "$STATE/helpers.after" "$STATE/helpers.current" || return 1
-  fi
+ resolver_matches || return 1
+ root_password_matches || return 1
+ if [ -f "$STATE/helpers.after" ]; then
+  helpers_snapshot > "$STATE/helpers.current" || return 1
+  cmp -s "$STATE/helpers.after" "$STATE/helpers.current" || return 1
  fi
 }
 initializing() { jq -e '.initialize==true' "$STATE/manifest.json" >/dev/null; }
@@ -937,7 +924,7 @@ reload_work() {
    fi
    restore_boot=true
   fi
-  if ! $TEST_MODE && [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ] && [ "$LEASE_BOOT" != "$(boot)" ]; then
+  if ! $TEST_MODE && [ "$LEASE_BOOT" != "$(boot)" ]; then
    count=0
    while ! timeout 3 ubus -t 2 list network.interface >/dev/null 2>&1; do
     count=$((count+1)); [ "$count" -lt 30 ] || fail restored_network_not_ready; sleep 2
@@ -945,7 +932,7 @@ reload_work() {
   fi
   if [ "$restore_boot" = false ]; then
    [ "$LEASE_BOOT" = "$(boot)" ] || restore_force=true
-   if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ] && network_changed wireless; then restore_wireless=true; fi
+   if network_changed wireless; then restore_wireless=true; fi
   fi
   jq -r 'to_entries[]|[.key,(.value.present|tostring),(.value.running|tostring),(.value.enabled|tostring)]|@tsv' "$STATE/services.before" > "$STATE/restore-services.tsv" || fail invalid_service_backup
   while IFS="$(printf '\t')" read -r name present running enable; do
@@ -1050,14 +1037,14 @@ reload_work() {
    else child_step 30 "$(p /etc/init.d/$name)" stop || fail service_stop_failed; fi
   fi
  done < "$STATE/activate-services.tsv"
- if [ "$REBOOT_STATE" != resumed ] && [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ] && network_changed wireless && [ -x "$(p /sbin/wifi)" ]; then child_step 45 "$(p /sbin/wifi)" reload || fail wireless_reload_failed; fi
+ if [ "$REBOOT_STATE" != resumed ] && network_changed wireless && [ -x "$(p /sbin/wifi)" ]; then child_step 45 "$(p /sbin/wifi)" reload || fail wireless_reload_failed; fi
  wait_desired_services || fail service_readback_failed
  if [ "$REBOOT_STATE" = resumed ]; then
   count=0
   while ! post_reboot_readback; do
    count=$((count+1)); [ "$count" -lt 30 ] || fail post_reboot_readback_failed; sleep 2
   done
- elif [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then helpers_snapshot > "$STATE/helpers.after"; fi
+ else helpers_snapshot > "$STATE/helpers.after"; fi
  lock
  active && [ "$LEASE_BOOT" = "$(boot)" ] && [ "$(now)" -lt "$DEADLINE" ] && current_matches || { unlock; return 1; }
  record reload-complete "$(boot) $TOKEN"
@@ -1222,9 +1209,7 @@ apply() {
   fi
  done < "$STATE/files.tsv"
  atomic_install "$STATE/ledger.json" "$LEDGER" 600
- if [ "$(jq -r .native_runtime "$STATE/manifest.json")" = true ]; then
-  resolver_install
- fi
+ resolver_install
  root_password_apply
 
  record applied "$(boot)"; sync

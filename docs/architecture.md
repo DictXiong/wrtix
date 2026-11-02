@@ -38,9 +38,18 @@ an agent or supplied master socket. A transaction creates and reuses a master wh
 needed. An SSH destination may be an alias, hostname or IP; it is not an implicit
 IPv4 topology. Public tooling has no default password or personal key.
 
-The target agent is package-owned. The controller compares contract, engine and
-guard hashes with its pinned version. It does not silently overwrite the runtime
-on each deployment. Install an explicitly compatible agent package first.
+The target agent is package-owned. The controller requires protocol `nixiz-v2`
+and the exact contract hash, then binds the installed engine and guard hashes to
+each transaction. It does not silently overwrite the runtime on each deployment.
+Install the compatible agent package first. There is one transaction path: agent
+identity, resolver state, optional credential handling and reboot verification
+cannot be disabled by a runtime-selection flag. Credentials and resolver policy
+remain optional resources; omitting them preserves the existing configuration.
+
+Version 0.2.0 does not accept v1 receipts or the removed runtime-selection
+parameter. Finish pending transactions with their matching controller before
+upgrading the package and controller together. This protocol version is independent
+of any firmware release.
 
 ## Target transaction
 

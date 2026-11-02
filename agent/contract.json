@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile": "nixiz-v1",
+  "profile": "nixiz-v2",
   "resource_model": "owned-openwrt-resources",
   "managed_file_modes": [
     "600",

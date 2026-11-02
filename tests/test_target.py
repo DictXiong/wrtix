@@ -102,14 +102,13 @@ esac
                  "files": ["etc/init.d/" + name], "services": [name]}).encode())
         return name, script
 
-    def check(self, paths, services=(), native_runtime=True):
-        return self.run_engine("check", data=json.dumps({"paths": list(paths), "services": list(services),
-                                                       "native_runtime": True}).encode())
+    def check(self, paths, services=()):
+        return self.run_engine("check", data=json.dumps({"paths": list(paths), "services": list(services)}).encode())
 
-    def bundle(self, files, services=None, native_runtime=True, baseline=None, extra=None, symlink=False, managed_services=None, initialize=False, resolver_target="profile-default"):
+    def bundle(self, files, services=None, baseline=None, extra=None, symlink=False, managed_services=None, initialize=False, resolver_target=None):
         files = {"etc/nixiz/identity.json": (json.dumps(self.identity).encode(), "600"), **files}
         services = services or {}
-        baseline = baseline or self.check(files, services, native_runtime)
+        baseline = baseline or self.check(files, services)
         token = uuid.uuid4().hex
         entries, payloads = [], {}
         for index, (path, value) in enumerate(files.items()):
@@ -127,9 +126,9 @@ esac
                     "guard_sha256": hashlib.sha256(GUARD_SOURCE.read_bytes()).hexdigest(),
                     "device_id": "fixture",
 
-                    "board_names": [], "native_runtime": True, "initialize": initialize,
+                    "board_names": [], "initialize": initialize,
                     "contract_sha256": baseline["contract_sha256"], "ttl_seconds": 120,
-                    "resolver_target": None if resolver_target == "profile-default" else resolver_target,
+                    "resolver_target": resolver_target,
                     "baseline": baseline, "files": entries, "services": services,
                     "managed_services": sorted(services) if managed_services is None else managed_services}
         payloads = {"manifest.json": json.dumps(manifest).encode(), **payloads}
@@ -150,8 +149,8 @@ esac
                     archive.addfile(info, io.BytesIO(data))
         return token, buffer.getvalue(), manifest
 
-    def apply(self, files, services=None, native_runtime=False):
-        token, data, manifest = self.bundle(files, services, native_runtime)
+    def apply(self, files, services=None):
+        token, data, manifest = self.bundle(files, services)
         self.run_engine("stage", data=data)
         self.run_engine("apply", token)
         return token, manifest
@@ -169,7 +168,7 @@ esac
     def ready(self):
         return self.wait(lambda status: status["state"] == "applied" and status["reload_complete"])
 
-    def new_boot(self, *, bootstrap=False, watch=True):
+    def new_boot(self, *, watch=True):
         self.stop_workers()
         current = uuid.UUID((self.root / "proc/sys/kernel/random/boot_id").read_text().strip())
         value = str(uuid.UUID(int=current.int + 1))
@@ -197,7 +196,7 @@ esac
     def planned_reboot(self, token, remaining=90):
         armed = self.run_engine("reboot", token)
         self.assertEqual(armed["reboot_state"], "armed")
-        current = self.new_boot(bootstrap=False)
+        current = self.new_boot()
         result = self.run_engine("resume", token, data=json.dumps(
             {"boot_id": current, "remaining_seconds": min(remaining, armed["reboot_remaining_seconds"])}).encode())
         self.assertEqual(result["reboot_state"], "resumed")
@@ -311,33 +310,33 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.service()
         link = self.root / "etc/rc.d/S50fixture"
         link.symlink_to("../init.d/something-else")
-        failed = self.run_engine("check", data=json.dumps({"paths": [], "services": ["fixture"], "native_runtime": False}).encode(), ok=False)
+        failed = self.run_engine("check", data=json.dumps({"paths": [], "services": ["fixture"]}).encode(), ok=False)
         self.assertIn(b"unsafe_service_link", failed.stderr)
         self.assertEqual(os.readlink(link), "../init.d/something-else")
 
     def test_service_snapshot_json_failure_cannot_return_partial_success(self):
         self.service()
         self.fault_tool("jq", "from_entries", b"{}\n")
-        self.run_engine("check", data=json.dumps({"paths": [], "services": ["fixture"], "native_runtime": False}).encode(), ok=False)
+        self.run_engine("check", data=json.dumps({"paths": [], "services": ["fixture"]}).encode(), ok=False)
 
     def test_final_snapshot_failure_cannot_be_overwritten_by_cleanup(self):
         self.fault_tool("jq", "(from_entries) as $f", b"{}\n")
-        self.run_engine("check", data=json.dumps({"paths": [], "services": [], "native_runtime": False}).encode(), ok=False)
+        self.run_engine("check", data=json.dumps({"paths": [], "services": []}).encode(), ok=False)
 
     def test_file_hash_producer_failure_cannot_create_valid_looking_baseline(self):
         self.put("etc/config/example", b"before")
         self.fault_tool("sha256sum", "etc/config/example", ("a" * 64 + "  file\n").encode())
-        failed = self.run_engine("check", data=json.dumps({"paths": ["etc/config/example"], "services": [], "native_runtime": False}).encode(), ok=False)
+        failed = self.run_engine("check", data=json.dumps({"paths": ["etc/config/example"], "services": []}).encode(), ok=False)
         self.assertIn(b"file_snapshot_failed", failed.stderr)
 
     def test_file_mode_producer_failure_cannot_create_partial_baseline(self):
         self.put("etc/config/example", b"before")
         self.fault_tool("ls", "etc/config/example", b"-rw------- 1 0 0 6 Oct 28 00:00 file\n")
-        failed = self.run_engine("check", data=json.dumps({"paths": ["etc/config/example"], "services": [], "native_runtime": False}).encode(), ok=False)
+        failed = self.run_engine("check", data=json.dumps({"paths": ["etc/config/example"], "services": []}).encode(), ok=False)
         self.assertIn(b"file_snapshot_failed", failed.stderr)
 
     def test_empty_and_multiple_json_documents_are_rejected(self):
-        valid = json.dumps({"paths": [], "services": [], "native_runtime": False}).encode()
+        valid = json.dumps({"paths": [], "services": []}).encode()
         for data in (b"", b"{}\n" + valid):
             with self.subTest(data=data):
                 self.run_engine("check", data=data, ok=False)
@@ -597,6 +596,20 @@ case "$action" in""")
         self.assertIn(b"deletion_not_owned", failed.stderr)
         self.assertEqual((self.root / "etc/unowned").read_bytes(), b"keep")
 
+    def test_removed_runtime_mode_cannot_skip_agent_checks(self):
+        for flag in (True, False):
+            with self.subTest(runtime_mode=flag):
+                request={"paths":[],"services":[],"native_runtime":flag}
+                failed=self.run_engine("check",data=json.dumps(request).encode(),ok=False)
+                self.assertIn(b"invalid_check_request",failed.stderr)
+                _,_,manifest=self.bundle({"etc/example":(b"candidate","600")})
+                manifest["native_runtime"]=flag
+                _,data,_=self.bundle({"etc/example":(b"candidate","600")},
+                                     extra={"manifest.json":json.dumps(manifest).encode()})
+                failed=self.run_engine("stage",data=data,ok=False)
+                self.assertIn(b"invalid_manifest",failed.stderr)
+                self.assertFalse((self.root/"etc/example").exists())
+
     def test_engine_digest_rejection_preserves_config_and_terminal_journal(self):
         token, _ = self.apply({"etc/config/example": (b"accepted", "600")})
         self.ready()
@@ -682,13 +695,11 @@ case "$action" in""")
         for path in ("etc/../shadow", "etc//shadow", "/etc/config/test", "etc/shadow",
                      "etc/ssh/ssh_host_ed25519_key", "etc/init.d/nixiz-agent"):
             with self.subTest(path=path):
-                self.run_engine("check", data=json.dumps({"paths": [path], "services": [],
-                                                         "native_runtime": False}).encode(), ok=False)
+                self.run_engine("check", data=json.dumps({"paths": [path], "services": []}).encode(), ok=False)
         outside = self.root / "outside"
         outside.mkdir()
         (self.root / "etc/link").symlink_to(outside, target_is_directory=True)
-        self.run_engine("check", data=json.dumps({"paths": ["etc/link/file"], "services": [],
-                                                 "native_runtime": False}).encode(), ok=False)
+        self.run_engine("check", data=json.dumps({"paths": ["etc/link/file"], "services": []}).encode(), ok=False)
 
     def test_archive_extras_and_symlinks_rejected(self):
         _, data, _ = self.bundle({"etc/config/example": (b"after", "600")}, extra={"extra": b"bad"})
@@ -798,7 +809,7 @@ case "$action" in""")
         self.put("sbin/wifi", (f"#!/bin/sh\necho called >> '{self.root}/run/wifi-actions'\n").encode(), 0o755)
         shadow_inode = (self.root / "etc/shadow").stat().st_ino
         token, _ = self.apply({"etc/vendor-config.json": (b'{"enabled":true}\n', "600")},
-                              {"fixture": {"enable": True, "running": True, "action": "reload", "reload": False}}, native_runtime=True)
+                              {"fixture": {"enable": True, "running": True, "action": "reload", "reload": False}})
         self.ready()
         self.assertFalse((self.root / "run/wifi-actions").exists())
         self.assertNotIn("fixture reload", (self.root / "run/service-actions").read_text())

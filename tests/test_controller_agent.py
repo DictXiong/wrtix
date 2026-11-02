@@ -28,7 +28,7 @@ class ControllerAgent(unittest.TestCase):
         compiled.update({key: identity[key] for key in ("engine_sha256", "guard_sha256")})
         ledger_path = self.target.root / "etc/nixiz/managed.json"
         old = json.loads(ledger_path.read_bytes()) if ledger_path.exists() else {}
-        request = {"native_runtime": True, "paths": openwrt.managed_paths(compiled, old),
+        request = {"paths": openwrt.managed_paths(compiled, old),
                    "services": sorted(set(compiled["services"]) | set(old.get("services", [])))}
         baseline = self.target.run_engine("check", data=openwrt.canonical(request))
         transaction, bundle = openwrt.pending_bundle(compiled, baseline, "fixture", 120, old, initialize=initialize)
@@ -41,7 +41,8 @@ class ControllerAgent(unittest.TestCase):
     def test_minimal_registration_preserves_password_network_and_keys(self):
         (self.target.root / "etc/nixiz/identity.json").unlink()
         before = {"etc/shadow": b"root:$6$existing:1:0:99999:7:::\n", "etc/config/network": b"# untouched\n",
-                  "etc/dropbear/authorized_keys": b"ssh-ed25519 existing\n"}
+                  "etc/dropbear/authorized_keys": b"ssh-ed25519 existing\n",
+                  "etc/resolv.conf": b"nameserver 192.0.2.53\n"}
         for path, data in before.items():
             self.target.put(path, data)
         compiled, tx, request = self.deploy({}, initialize=True)

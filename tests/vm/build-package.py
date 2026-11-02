@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apk', required=True)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--version', default='0.1.0-r1')
+    parser.add_argument('--version', default='0.2.0-r1')
     args = parser.parse_args()
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)

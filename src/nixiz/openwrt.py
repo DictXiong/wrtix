@@ -114,7 +114,7 @@ installer_unexpected_archive_member installer_unsafe_directory installer_unsafe_
 installer_unsafe_runtime installer_workspace_failed invalid_archive invalid_backup_metadata
 invalid_backup_paths invalid_check_request invalid_command invalid_lease invalid_manifest
 invalid_owned_ledger invalid_payload_name invalid_service_backup invalid_token
-identity_check_failed identity_status_failed transaction_active missing_contract missing_native_runtime
+identity_check_failed identity_status_failed transaction_active missing_contract missing_agent_runtime
 missing_backup_metadata missing_guard missing_manifest missing_payload missing_required_service
 no_transaction nonregular_archive_member orphan_reload_child_would_not_stop payload_corrupt
 payload_mismatch pending_config_check_failed pending_uci_changes reload_child_would_not_stop
@@ -128,7 +128,7 @@ transaction_active unexpected_archive_member unsafe_archive_directory unsafe_bac
 unsafe_existing_path unsafe_install_path unsafe_lock unsafe_path unsafe_resolver_type
 unsafe_restore_path unsafe_runtime_directory unsafe_service_link unsafe_service_name
 unsafe_state_directory unsupported_resolver_symlink wireless_reload_failed
-unsafe_initialization_access unsafe_bootstrap_state initialization_access_restore_failed
+unsafe_initialization_access
 initialization_access_snapshot_failed initialization_key_retirement_failed confirmation_identity_mismatch
 initialization_access_changed network_mac_check_failed network_mac_config_invalid
 invalid_network_restart_state invalid_reboot_state reboot_not_required reboot_already_consumed
@@ -395,7 +395,7 @@ class Transport:
         output = self._run_stage("agent identity preflight", shlex.join(["sh", REMOTE, "identity"]))
         try:
             result = json.loads(output)
-            if (not isinstance(result, dict) or result.get("profile") != "nixiz-v1"
+            if (not isinstance(result, dict) or result.get("profile") != "nixiz-v2"
                     or not isinstance(result.get("identity"), dict)
                     or any(not isinstance(result.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", result[key])
                            for key in ("contract_sha256", "engine_sha256", "guard_sha256"))):
@@ -480,7 +480,7 @@ def pending_bundle(compiled, baseline, node, ttl, old, initialize=False):
                 "boot_id": baseline["boot_id"], "device_id": node,
                 "board_names": compiled["identity"].get("board_names", []),
                 "contract_sha256": compiled["contract_sha256"], "resolver_target": compiled.get("resolver_target"), "ttl_seconds": ttl,
-                "native_runtime": compiled["native_runtime"], "initialize": initialize, "baseline": baseline, "files": files, "services": services, "managed_services": sorted(compiled["services"]), "changed_paths": changed,
+                "initialize": initialize, "baseline": baseline, "files": files, "services": services, "managed_services": sorted(compiled["services"]), "changed_paths": changed,
                 "engine_sha256": compiled["engine_sha256"],
                 "guard_sha256": compiled["guard_sha256"],
                 "root_password_managed": compiled.get("root_password_managed", False),
@@ -514,12 +514,12 @@ def safe_reload_error(value, phase):
     if (not isinstance(value, dict) or value.get("phase") != phase
             or not isinstance(value.get("code"), str) or value["code"] not in REMOTE_ERROR_CODES):
         return None
-    if value.get("kind") not in (None, "service", "native", "bootstrap", "wireless", "worker"):
+    if value.get("kind") not in (None, "service", "wireless", "worker"):
         return None
     service = value.get("service")
     if service is not None and (not isinstance(service, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}", service)):
         return None
-    if value.get("action") not in (None, "start", "stop", "enable", "disable", "reload", "restart", "finalize", "sync-root-password"):
+    if value.get("action") not in (None, "start", "stop", "enable", "disable", "reload", "restart"):
         return None
     code = value.get("exit_code")
     if code is not None and (type(code) is not int or not 0 <= code <= 255):
@@ -730,10 +730,9 @@ def complete_planned_reboot(transport, receipt, receipt_path, status, transports
                 raise activation_failure(status)
             phase = status.get("reboot_state")
             if phase in ("awaiting-resume", "resumed"):
-                if receipt.get("native_runtime") or receipt.get("initialize"):
-                    contract = transport.agent_preflight()
-                    if contract.get("boot_id") != status.get("current_boot_id"):
-                        raise DeployError("post-reboot agent boot identity differs")
+                contract = transport.agent_preflight()
+                if contract.get("boot_id") != status.get("current_boot_id"):
+                    raise DeployError("post-reboot agent boot identity differs")
                 if phase == "awaiting-resume":
                     progress.message("Target reboot verified; resuming the original rollback deadline")
                     status = transport.call("resume", receipt["token"], data=canonical({
@@ -850,10 +849,9 @@ def wait_post_switch(initial, receipt, seconds, transports):
                 current = status.get("current_boot_id", status.get("boot_id"))
                 if current != receipt["boot_id"]:
                     raise DeployError("unexpected transaction boot")
-                if receipt.get("native_runtime"):
-                    contract = transport.agent_preflight()
-                    if contract.get("boot_id") != current:
-                        raise DeployError("post-switch agent boot identity differs")
+                contract = transport.agent_preflight()
+                if contract.get("boot_id") != current:
+                    raise DeployError("post-switch agent boot identity differs")
                 return transport, status
         time.sleep(2)
     raise DeployError("post-switch connection not verified; automatic rollback remains armed")
@@ -926,7 +924,7 @@ def initialization_recovery(args, receipt, transports):
     if any(key not in receipt for key in required) or not isinstance(receipt.get("expected_identity"), dict):
         raise DeployError("invalid initialization receipt")
     compiled = {"target_host": receipt["management_host"], "ssh_port": receipt["configured_ssh_port"],
-                "native_runtime": True, "identity": receipt["expected_identity"],
+                "identity": receipt["expected_identity"],
                 "contract_sha256": receipt["contract_sha256"]}
     initial = Transport(args, {"deployment": {}}, compiled, receipt["device_id"],
                         host=receipt.get("user", "root") + "@" + receipt["initial_host"])
@@ -1040,7 +1038,7 @@ def main(argv=None):
             receipt["post_switch_host"] = args.post_switch_host
         if args.post_switch_port is not None:
             receipt["post_switch_port"] = args.post_switch_port
-        if receipt.get("schema_version") != 1 or receipt.get("protocol") != "nixiz-v1" or not isinstance(receipt.get("device_id"), str):
+        if receipt.get("schema_version") != 1 or receipt.get("protocol") != "nixiz-v2" or not isinstance(receipt.get("device_id"), str):
             raise DeployError("invalid transaction receipt")
         if args.device and args.device != receipt["device_id"]:
             raise DeployError("receipt belongs to another device")
@@ -1066,7 +1064,6 @@ def main(argv=None):
                     transport, current = initialization_recovery(args, receipt, transports)
                 else:
                     compiled = {"target_host": receipt["host"], "ssh_port": args.port,
-                                "native_runtime": receipt.get("native_runtime", False),
                                 "identity": receipt.get("expected_identity", {}),
                                 "contract_sha256": receipt.get("contract_sha256")}
                     last_error = None
@@ -1138,14 +1135,11 @@ def main(argv=None):
         for node in selected:
             device_progress = progress.for_device(node)
             compiled = fleet[node]
-            if args.initialize and not compiled["native_runtime"]:
-                raise DeployError("initialization requires a complete generated configuration")
             transport = transports.enter_context(Transport(args, manifest, compiled, node))
             if args.post_switch_host is not None:
                 transport.reconnect(args.post_switch_host)  # Parse without connecting or changing configuration.
             if args.command == "plan":
                 result = {"device": node, "target_host": compiled["target_host"],
-                          "native_runtime": compiled["native_runtime"],
                           "managed_paths": sorted(compiled["files"]), "packages": compiled["packages"],
                           "secret_references": compiled["secret_references"], "secret_values_compared": False}
                 if args.post_switch_host is not None:
@@ -1201,8 +1195,7 @@ def main(argv=None):
                 old = transport.ledger()
                 if old and (initialize or old.get("device_id") != node):
                     raise DeployError("managed resource ledger belongs to another device or is present on an uninitialized target")
-                request = {"native_runtime": compiled["native_runtime"],
-                           "paths": managed_paths(compiled, old),
+                request = {"paths": managed_paths(compiled, old),
                            "services": sorted(set(compiled["services"]) | set(old.get("services", [])))}
                 baseline = transport.call("check", data=canonical(request))
                 if initialize and (baseline.get("boot_id") != contract.get("boot_id")
@@ -1245,19 +1238,18 @@ def main(argv=None):
                 if not 60 <= ttl <= 7200:
                     raise DeployError("rollback timeout outside supported range")
                 transaction, data = pending_bundle(compiled, baseline, node, ttl, old, initialize=initialize)
-                receipt = {"schema_version": 1, "protocol": "nixiz-v1", "device_id": node, "host": transport.host,
+                receipt = {"schema_version": 1, "protocol": "nixiz-v2", "device_id": node, "host": transport.host,
                            "port": transport.port, "initial_port": transport.port, "initial_host": transport.host,
                            "user": transport.user, "token": transaction["token"], "state": "prepared",
                            "boot_id": baseline["boot_id"], "origin_boot_id": baseline["boot_id"],
                            "rollback_deadline": time.time() + ttl, "host_key_alias": transport.host_key_alias,
-                           "native_runtime": compiled["native_runtime"], "changed_paths": changed,
+                           "changed_paths": changed,
                            "manifest_sha256": digest(canonical(manifest))}
                 if args.post_switch_host is not None:
                     receipt["post_switch_host"] = transport.reconnect(args.post_switch_host).destination()
                 if args.post_switch_port is not None:
                     receipt["post_switch_port"] = args.post_switch_port
-                if compiled["native_runtime"]:
-                    receipt.update({"expected_identity": compiled["identity"], "contract_sha256": compiled["contract_sha256"]})
+                receipt.update({"expected_identity": compiled["identity"], "contract_sha256": compiled["contract_sha256"]})
                 if initialize:
                     receipt.update({"initialize": True, "initial_host": transport.host,
                                     "management_host": compiled["target_host"], "initial_identity": baseline["identity"],

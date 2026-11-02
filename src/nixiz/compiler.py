@@ -35,7 +35,7 @@ def load_contract():
     try:
         data = contract_path().read_bytes()
         value = json.loads(data)
-        if value.get("profile") != "nixiz-v1":
+        if value.get("profile") != "nixiz-v2":
             raise ValueError()
         return value, digest(data)
     except (OSError, ValueError):
@@ -498,7 +498,7 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
         boards = expected.get("board_names", [])
         if not isinstance(boards, list) or any(not isinstance(b, str) or not re.fullmatch(r"[A-Za-z0-9_,.+-]+", b) for b in boards):
             raise CompileError("invalid expected board names")
-        result[name] = {**resources, "packages": packages, "native_runtime": True,
+        result[name] = {**resources, "packages": packages,
                        "root_password_managed": hash_ is not None,
                        "identity": {"device_id": name, "board_names": boards},
                        "contract_sha256": contract_hash, "resolver_target": target,

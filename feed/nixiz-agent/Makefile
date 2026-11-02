@@ -5,7 +5,7 @@ NIXIZ_SOURCE_DIR:=$(abspath $(dir $(realpath $(lastword $(MAKEFILE_LIST))))/../.
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nixiz-agent
-PKG_VERSION:=0.1.0
+PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 PKGARCH:=all
