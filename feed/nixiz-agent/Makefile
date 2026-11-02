@@ -67,7 +67,7 @@ fi
 mkdir -p /etc/nixiz || exit 1
 chmod 0700 /etc/nixiz || exit 1
 [ ! -L /etc/nixiz/package-operation ] || exit 1
-(umask 077; printf 'install\n' > /etc/nixiz/package-operation) || exit 1
+(umask 077; printf 'prepare-install\n' > /etc/nixiz/package-operation) || exit 1
 exit 0
 endef
 

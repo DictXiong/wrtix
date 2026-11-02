@@ -3,6 +3,7 @@
 # It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
 """Inert source-hook tests; paths and root UID are mapped to a private fixture."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -47,6 +48,36 @@ class BackupHook(unittest.TestCase):
         result = subprocess.run(['/bin/sh', '-c', '. "$1"; nixiz_add_managed_conffiles "$2"', 'fixture', str(self.root / 'hook.sh'), str(self.root / 'list')], capture_output=True, text=True)
         self.assertEqual(result.returncode == 0, success, result.stderr)
         return result
+
+    def test_first_install_marker_is_accepted_by_installed_lifecycle(self):
+        feed=SOURCE.parents[3]
+        makefile=(feed/'Makefile').read_text()
+        preinst=makefile.split('define Package/nixiz-agent/preinst\n',1)[1].split('\nendef',1)[0].replace('$$','$')
+        def relocated(script):
+            for name in ('/etc/nixiz','/usr/libexec/nixiz','/usr/share/nixiz','/etc/init.d/nixiz-agent'):
+                script=script.replace(name,str(self.root)+name)
+            return script.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+shlex.quote(os.environ['PATH'])).replace('(cd /;', '(cd '+shlex.quote(str(self.root))+';')
+        (self.root/'usr/libexec/nixiz/agent').unlink()
+        self.put('preinst.sh',relocated(preinst))
+        result=subprocess.run(['/bin/sh',str(self.root/'preinst.sh')],capture_output=True,text=True,
+                              env={**os.environ,'IPKG_INSTROOT':''})
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'etc/nixiz/package-operation').read_text(),'prepare-install\n')
+        identity=json.dumps({"profile":"nixiz-v2","contract_sha256":"a"*64})
+        agent="#!/bin/sh\ncase \"$1\" in identity) echo "+shlex.quote(identity)+";; status) echo "+shlex.quote('{"state":"absent"}')+";; *) exit 1;; esac\n"
+        self.put('usr/libexec/nixiz/agent',agent,0o755)
+        self.put('etc/init.d/nixiz-agent','#!/bin/sh\nexit 0\n',0o755)
+        self.put('usr/share/nixiz/contract.json','{}\n')
+        members=('usr/libexec/nixiz/agent','etc/init.d/nixiz-agent','usr/share/nixiz/contract.json')
+        self.put('usr/share/nixiz/runtime.sha256',''.join(hashlib.sha256((self.root/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in members))
+        lifecycle=SOURCE.parents[2]/'usr/libexec/nixiz/package-lifecycle'
+        self.put('lifecycle.sh',relocated(lifecycle.read_text()))
+        self.put('etc/config/network','original network\n')
+        self.put('etc/shadow','original authentication\n')
+        result=subprocess.run(['/bin/sh',str(self.root/'lifecycle.sh'),'finish-install'],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'etc/config/network').read_text(),'original network\n')
+        self.assertEqual((self.root/'etc/shadow').read_text(),'original authentication\n')
 
     def test_package_hooks_preserve_foreign_lifecycle_fence(self):
         lifecycle = SOURCE.parents[2] / 'usr/libexec/nixiz/package-lifecycle'
