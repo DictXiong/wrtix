@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "profile": "nixiz-v1",
+  "resource_model": "owned-openwrt-resources",
+  "managed_file_modes": [
+    "600",
+    "644",
+    "700",
+    "755"
+  ],
+  "reserved_services": [
+    "nixiz-agent"
+  ]
+}
