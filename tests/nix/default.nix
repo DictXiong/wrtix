@@ -44,6 +44,23 @@ let
         };
       }
     ]).config.services.openwrt.manifest;
+  quickStart = (import ../../templates/minimal/flake.nix).outputs { inherit nixiz; };
+  quickStartDevice =
+    quickStart.openwrtConfigurations.home.config.services.openwrt.manifest.devices.router;
+  apExample =
+    (evaluate [
+      (import ../../templates/ap/ap.nix {
+        targetHost = "root@router.example";
+        ssid = "Example Wi-Fi";
+        ports = [
+          "lan1"
+          "lan2"
+        ];
+        phy = "phy0";
+        country = "GB";
+        passwordFile = pkgs.writeText "encrypted-example.yaml" "synthetic ciphertext fixture\n";
+      })
+    ]).config.services.openwrt.manifest.devices.router;
   conflicting = evaluate [
     base
     {
@@ -123,6 +140,35 @@ let
     assert noProfile.devices.router.target_host == "2001:db8::1";
     assert noProfile.devices.router.identity == { };
     assert noProfile.devices.router.users.root.passwordHash == null;
+    assert quickStartDevice.files."/etc/nixiz-example".text == "Managed by nixiz\n";
+    assert quickStartDevice.checks == { };
+    assert quickStartDevice.identity == { };
+    assert quickStartDevice.uci == { };
+    assert quickStartDevice.users.root.passwordHash == null;
+    assert quickStartDevice.users.root.authorizedKeys == null;
+    assert apExample.checks == { };
+    assert apExample.users.root.authorizedKeys == null;
+    assert apExample.users.root.passwordHash == null;
+    assert apExample.uci.network.lan.options.proto == "dhcp";
+    assert !apExample.services.dnsmasq.enable;
+    assert !apExample.services.odhcpd.enable;
+    assert
+      apExample.uci.network.bridge.options.ports == [
+        "lan1"
+        "lan2"
+      ];
+    assert apExample.uci.network.loopback.options.device == "lo";
+    assert apExample.uci.wireless.radio0.options.phy == "phy0";
+    assert apExample.uci.wireless.ap.options.network == "lan";
+    assert apExample.uci.wireless.ap.options.key.sops.key == "wifi_password";
+    assert
+      apExample.services.network.reloadOn.uci == [
+        "network"
+        "wireless"
+      ];
+    assert
+      quickStart.apps.x86_64-linux.default.program
+      == "${quickStart.openwrtConfigurations.home.config.system.build.openwrt-rebuild}/bin/openwrt-rebuild";
     assert disabled.config.system.build == { };
     assert disabled.config.services.openwrt.manifest.devices == { };
     assert !succeeds conflicting.config.services.openwrt.manifest;

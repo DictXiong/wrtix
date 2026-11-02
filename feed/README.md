@@ -5,7 +5,14 @@ It has not been reviewed line by line by a human.
 # OpenWrt feed
 
 Add the **repository root** as an OpenWrt feed; package discovery finds
-`feed/nixiz-agent/Makefile`. For a local checkout:
+`feed/nixiz-agent/Makefile`. In the matching OpenWrt SDK/build tree's
+`feeds.conf`, pin a reviewed commit (replace `<commit>`):
+
+```text
+src-git nixiz https://github.com/DictXiong/nixiz.git^<commit>
+```
+
+For a local checkout instead:
 
 ```text
 src-link nixiz /absolute/path/to/nixiz

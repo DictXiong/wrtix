@@ -14,6 +14,15 @@
     in
     {
       nixosModules.default = import ./nix/nixos.nix;
+      templates.default = self.templates.ap;
+      templates.ap = {
+        path = ./templates/ap;
+        description = "A single-radio wired access point using plain UCI resources";
+      };
+      templates.minimal = {
+        path = ./templates/minimal;
+        description = "Manage one OpenWrt device without a custom profile or validator";
+      };
       lib.openwrtConfiguration =
         {
           pkgs,

@@ -33,21 +33,29 @@ openwrtConfigurations.site = nixiz.lib.openwrtConfiguration {
 };
 ```
 
-Use a pinned flake input for nixiz. An explicit local `path:` input is suitable for
-development before publishing a repository. The package is available for
+Use `github:DictXiong/nixiz` as the input and retain `flake.lock` to pin its
+revision. An explicit local `path:` input is suitable for development. The package is available for
 `x86_64-linux` and `aarch64-linux`; the target agent is shell code packaged by an
 OpenWrt feed.
+
+UCI declarations own complete `/etc/config/<package>` files; they are not
+imperative patches over whatever happens to be installed. Include the necessary
+sections and hardware settings, or have a user profile generate them. The
+[AP template](../templates/ap/ap.nix) illustrates a complete small network and
+wireless configuration using ordinary resources, without a custom validator.
 
 ## Build and deploy
 
 ```sh
 openwrt-rebuild build --flake .#openwrtConfigurations.site
 openwrt-rebuild dry-run --flake .#openwrtConfigurations.site --device router
-openwrt-rebuild switch --flake .#openwrtConfigurations.site --device router --init
+openwrt-rebuild switch --flake .#openwrtConfigurations.site --device router \
+  --init --target-host root@router.example
 ```
 
-`--init` / `--initialize` explicitly permits first registration. Later deployments
-omit it. `--target-host` overrides the initial SSH endpoint. Without an explicit
+`--init` / `--initialize` explicitly permits first registration and requires one
+`--device` and an explicit `--target-host`. Later deployments omit `--init`.
+`--target-host` overrides the initial SSH endpoint. Without an explicit
 flake fragment, the wrapper uses the local hostname, following the NixOS-style
 selection behavior. If a name exists in both namespaces, use
 `nixosConfigurations.NAME` or `openwrtConfigurations.NAME` explicitly.

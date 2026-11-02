@@ -50,6 +50,12 @@ all required extension checks.
 
 ## Required checks
 
+Custom checks are optional. Direct resource configurations need no validator or
+check executable: nixiz already validates resource types, ownership, paths,
+permissions and transaction consistency. A simple profile can use Nix
+`assertions` alone. Add executable checks only when a constraint requires
+resolved secrets, final merged resources or live device state.
+
 A check has a unique name, `phase`, absolute `executable`, `timeoutSeconds` and
 an attribute-set `input`. Timeouts are bounded; every declared check is required.
 
