@@ -280,10 +280,10 @@ class Transport:
         except DeployError as error:
             raise DeployError(stage + ": " + str(error)) from None
 
-    def reconnect(self, host, host_key_alias=None):
+    def reconnect(self, host, host_key_alias=None, *, port=None):
         """Use a fresh connection and the original trusted host key at a new address."""
         args = copy.copy(self.args)
-        args.control_socket, args.port = None, self.port
+        args.control_socket, args.port = None, self.port if port is None else port
         target = host if "@" in host else self.user + "@" + host
         result = Transport(args, self.manifest, self.compiled, self.node, host=target)
         result._private_connection = True
@@ -636,6 +636,49 @@ def remaining_rollback_seconds(receipt):
     return remaining
 
 
+def receipt_port(receipt, key, fallback):
+    value = receipt.get(key, fallback)
+    if type(value) is not int or not 1 <= value <= 65535:
+        raise DeployError("invalid receipt SSH port")
+    return value
+
+
+def receipt_endpoints(args, receipt):
+    """Keep original, current and candidate ports distinct during recovery."""
+    current = receipt_port(receipt, "port", 22)
+    initial = receipt_port(receipt, "initial_port", current)
+    post = receipt_port(receipt, "post_switch_port", current)
+    override = getattr(args, "_receipt_port_override", None)
+    post_host = receipt.get("post_switch_host") or receipt.get("management_host") or receipt["host"]
+    explicit_post = getattr(args, "post_switch_port", None) is not None
+    if override is not None:
+        current = initial = override
+        if args.command != "confirm" or not explicit_post:
+            post = override
+    if args.target_host:
+        return [(args.target_host, post if args.command == "confirm" else current)]
+    if args.command == "confirm":
+        rows = [(post_host, post)]
+        # A controller lost before requesting a planned reboot may still need
+        # the old endpoint to issue it. It cannot confirm there instead.
+        if receipt.get("reboot_required") and receipt.get("reboot_state") in ("required", "armed"):
+            rows.append((receipt.get("initial_host", receipt["host"]), initial))
+    else:
+        rows = [(receipt["host"], current), (post_host, post),
+                (receipt.get("initial_host", receipt["host"]), initial)]
+    return list(dict.fromkeys(rows))
+
+
+def verify_reboot_fallback(args, endpoint_index, status):
+    # A stale receipt may say reboot is pending even when it already happened.
+    # Only a live, applied pre-reboot transaction can use the old endpoint to
+    # request that reboot; terminal or resumed state there is not confirmation.
+    if args.command == "confirm" and endpoint_index > 0:
+        if not (status.get("reboot_required") is True and status.get("state") == "applied"
+                and status.get("reboot_state") in ("required", "armed")):
+            raise DeployError("candidate SSH endpoint not verified; old endpoint cannot confirm")
+
+
 def complete_planned_reboot(transport, receipt, receipt_path, status, transports, seconds, progress, *, ask_post_switch_host=False):
     """Spend the original lease across one boot, authenticating before resuming it."""
     transaction_status(status, receipt)
@@ -647,7 +690,7 @@ def complete_planned_reboot(transport, receipt, receipt_path, status, transports
              "transaction reboot requirement changed", "invalid transaction boot identity",
              "unexpected transaction boot", "post-reboot agent boot identity differs",
              "target registered identity differs", "target board differs from the declared expectation",
-             "target agent protocol differs from the controller", "online SSH port migration is unsupported"}
+             "target agent protocol differs from the controller"}
     def fatal_error(error):
         message = str(error)
         return isinstance(error, ActivationError) or message in fatal or any(reason in message for reason in (
@@ -674,7 +717,11 @@ def complete_planned_reboot(transport, receipt, receipt_path, status, transports
         destination = receipt.get("post_switch_host") or (
             receipt["management_host"] if receipt.get("initialize") else transport.host)
     transport = transports.enter_context(transport.reconnect(
-        destination, host_key_alias=receipt.get("host_key_alias", transport.host_key_alias)))
+        destination, host_key_alias=receipt.get("host_key_alias", transport.host_key_alias),
+        port=receipt_port(receipt, "post_switch_port", transport.port)))
+    previous = transports.enter_context(transport.reconnect(
+        receipt.get("initial_host", transport.host), host_key_alias=receipt.get("host_key_alias", transport.host_key_alias),
+        port=receipt_port(receipt, "initial_port", transport.port)))
     while time.monotonic() < deadline:
         try:
             status = transport.call("status")
@@ -701,6 +748,17 @@ def complete_planned_reboot(transport, receipt, receipt_path, status, transports
                     "transaction rolled back or service activation failed",
                     "transaction deadline passed; automatic rollback remains armed"):
                 raise
+        if (previous.host, previous.port) != (transport.host, transport.port):
+            try:
+                restored = previous.call("status")
+                transaction_status(restored, receipt)
+            except DeployError as error:
+                if fatal_error(error):
+                    raise
+            else:
+                if restored.get("state") in terminal:
+                    save_transaction_status(receipt_path, receipt, restored, previous)
+                    raise activation_failure(restored)
         time.sleep(2)
     raise DeployError("target reboot not verified; automatic rollback remains armed")
 
@@ -764,7 +822,8 @@ def wait_post_switch(initial, receipt, seconds, transports):
     """Preserve the old channel for a planned boot, otherwise verify the new one."""
     deadline = time.monotonic() + min(seconds, remaining_rollback_seconds(receipt))
     post = transports.enter_context(initial.reconnect(
-        receipt["post_switch_host"], host_key_alias=receipt["host_key_alias"]))
+        receipt.get("post_switch_host") or receipt.get("management_host") or initial.host, host_key_alias=receipt["host_key_alias"],
+        port=receipt_port(receipt, "post_switch_port", initial.port)))
     terminal = {"rolled-back", "rollback_pending", "rollback_incomplete", "reload_failed"}
     while time.monotonic() < deadline:
         for transport in (initial, post):
@@ -842,7 +901,7 @@ def wait_initialized(transport, receipt, seconds, *, initial_transport=None, rec
         except DeployError as error:
             if isinstance(error, ActivationError) or str(error) in fatal:
                 raise
-            if initial_transport is not None and initial_transport.host != transport.host:
+            if initial_transport is not None and (initial_transport.host, initial_transport.port) != (transport.host, transport.port):
                 try:
                     previous = initial_transport.call("status")
                     initialization_status(previous, receipt)
@@ -871,19 +930,13 @@ def initialization_recovery(args, receipt, transports):
                 "contract_sha256": receipt["contract_sha256"]}
     initial = Transport(args, {"deployment": {}}, compiled, receipt["device_id"],
                         host=receipt.get("user", "root") + "@" + receipt["initial_host"])
-    if args.target_host:
-        hosts = [args.target_host if "@" in args.target_host else receipt.get("user", "root") + "@" + args.target_host]
-    elif args.command == "confirm":
-        hosts = [receipt.get("post_switch_host") or receipt["management_host"]]
-    else:
-        hosts = list(dict.fromkeys(host for host in (
-            receipt["host"], receipt.get("post_switch_host"), receipt["management_host"], receipt["initial_host"]) if host))
     last_error = None
-    for host in hosts:
-        transport = transports.enter_context(initial.reconnect(host, host_key_alias=receipt["host_key_alias"]))
+    for endpoint_index, (host, port) in enumerate(receipt_endpoints(args, receipt)):
+        transport = transports.enter_context(initial.reconnect(host, host_key_alias=receipt["host_key_alias"], port=port))
         try:
             current = transport.call("status")
             initialization_status(current, receipt)
+            verify_reboot_fallback(args, endpoint_index, current)
             contract = transport.agent_contract()
             identity = contract["identity"]
             desired = receipt["expected_identity"]
@@ -930,6 +983,7 @@ def main(argv=None):
         post.add_argument("--ask-post-switch-host", action="store_true",
                           help="Ask on the foreground terminal for the address after activation or reboot")
         child.add_argument("--port", type=int)
+        child.add_argument("--post-switch-port", type=int, help="SSH port after activation or reboot (default: keep initial port)")
         child.add_argument("--control-socket")
         child.add_argument("--jump-host")
         child.add_argument("--known-hosts")
@@ -962,7 +1016,11 @@ def main(argv=None):
                 result.update(clean_receipts(device=args.device, older_than_days=args.older_than))
         emit(result)
         return
-    if (args.post_switch_host is not None or args.ask_post_switch_host) and (args.all
+    if args.port is not None and not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.post_switch_port is not None and not 1 <= args.post_switch_port <= 65535:
+        parser.error("--post-switch-port must be between 1 and 65535")
+    if (args.post_switch_host is not None or args.post_switch_port is not None or args.ask_post_switch_host) and (args.all
             or args.command not in ("plan", "deploy", "confirm")
             or args.command in ("plan", "deploy") and not args.device
             or args.command == "confirm" and not args.receipt):
@@ -980,14 +1038,17 @@ def main(argv=None):
             receipt = read_json(args.receipt)
         if args.post_switch_host is not None:
             receipt["post_switch_host"] = args.post_switch_host
+        if args.post_switch_port is not None:
+            receipt["post_switch_port"] = args.post_switch_port
         if receipt.get("schema_version") != 1 or receipt.get("protocol") != "nixiz-v1" or not isinstance(receipt.get("device_id"), str):
             raise DeployError("invalid transaction receipt")
         if args.device and args.device != receipt["device_id"]:
             raise DeployError("receipt belongs to another device")
         if args.all:
             raise DeployError("a receipt addresses one device")
+        args._receipt_port_override = args.port
         if args.port is None:
-            args.port = receipt.get("port", 22)
+            args.port = receipt_port(receipt, "port", 22)
         device_progress = progress.for_device(receipt["device_id"])
         prompted_current = False
         if args.ask_post_switch_host and not args.target_host:
@@ -1008,20 +1069,30 @@ def main(argv=None):
                                 "native_runtime": receipt.get("native_runtime", False),
                                 "identity": receipt.get("expected_identity", {}),
                                 "contract_sha256": receipt.get("contract_sha256")}
-                    target = args.target_host or (receipt.get("post_switch_host") if args.command == "confirm" else None) or (
-                        receipt.get("user", "root") + "@" + receipt["host"])
-                    if not args.target_host and "@" not in target:
-                        target = receipt.get("user", "root") + "@" + target
-                    initial = Transport(args, {"deployment": {}}, compiled, receipt["device_id"], host=target)
-                    if receipt.get("host_key_alias"):
-                        transport = transports.enter_context(initial.reconnect(target, host_key_alias=receipt["host_key_alias"]))
+                    last_error = None
+                    for endpoint_index, (target, port) in enumerate(receipt_endpoints(args, receipt)):
+                        if "@" not in target:
+                            target = receipt.get("user", "root") + "@" + target
+                        initial = Transport(args, {"deployment": {}}, compiled, receipt["device_id"], host=target)
+                        transport = transports.enter_context(initial.reconnect(
+                            target, host_key_alias=receipt.get("host_key_alias"), port=port))
+                        try:
+                            current = transport.call("status")
+                        except DeployError as error:
+                            if any(reason in str(error) for reason in ("SSH host key changed", "SSH host key verification failed", "invalid transaction response")):
+                                raise
+                            last_error = error
+                            transport.close()
+                            continue
+                        transaction_status(current, receipt)
+                        verify_reboot_fallback(args, endpoint_index, current)
+                        break
                     else:
-                        transport = transports.enter_context(initial)
-                    current = transport.call("status")
+                        raise DeployError("transaction endpoint unavailable: " + str(last_error))
                 transaction_status(current, receipt)
                 if receipt.get("post_switch_host"):
                     receipt["post_switch_host"] = transport.reconnect(receipt["post_switch_host"]).destination()
-            if args.command == "confirm" and (args.post_switch_host is not None or (
+            if args.command == "confirm" and (args.post_switch_host is not None or args.post_switch_port is not None or (
                     args.ask_post_switch_host and not prompted_current and not current.get("reboot_required"))):
                 with device_progress.stage("Verifying the post-switch connection"):
                     deadline = time.monotonic() + min(args.wait, remaining_rollback_seconds(receipt))
@@ -1079,6 +1150,8 @@ def main(argv=None):
                           "secret_references": compiled["secret_references"], "secret_values_compared": False}
                 if args.post_switch_host is not None:
                     result["post_switch_host"] = args.post_switch_host
+                if args.post_switch_port is not None:
+                    result["post_switch_port"] = args.post_switch_port
                 if args.ask_post_switch_host:
                     result["ask_post_switch_host"] = True
                 if args.remote:
@@ -1173,13 +1246,16 @@ def main(argv=None):
                     raise DeployError("rollback timeout outside supported range")
                 transaction, data = pending_bundle(compiled, baseline, node, ttl, old, initialize=initialize)
                 receipt = {"schema_version": 1, "protocol": "nixiz-v1", "device_id": node, "host": transport.host,
-                           "port": transport.port, "user": transport.user, "token": transaction["token"], "state": "prepared",
+                           "port": transport.port, "initial_port": transport.port, "initial_host": transport.host,
+                           "user": transport.user, "token": transaction["token"], "state": "prepared",
                            "boot_id": baseline["boot_id"], "origin_boot_id": baseline["boot_id"],
                            "rollback_deadline": time.time() + ttl, "host_key_alias": transport.host_key_alias,
                            "native_runtime": compiled["native_runtime"], "changed_paths": changed,
                            "manifest_sha256": digest(canonical(manifest))}
                 if args.post_switch_host is not None:
                     receipt["post_switch_host"] = transport.reconnect(args.post_switch_host).destination()
+                if args.post_switch_port is not None:
+                    receipt["post_switch_port"] = args.post_switch_port
                 if compiled["native_runtime"]:
                     receipt.update({"expected_identity": compiled["identity"], "contract_sha256": compiled["contract_sha256"]})
                 if initialize:
@@ -1198,7 +1274,7 @@ def main(argv=None):
                     applied = transport.call("apply", receipt["token"])
                 except DeployError:
                     device_progress.message("Apply response unavailable; checking transaction state")
-                    if not initialize and not args.post_switch_host and not args.ask_post_switch_host:
+                    if not initialize and not args.post_switch_host and args.post_switch_port is None and not args.ask_post_switch_host:
                         applied = wait_ready(transport, receipt["token"], min(args.wait, ttl - 15))
                     else:
                         applied = None
@@ -1219,7 +1295,7 @@ def main(argv=None):
                         receipt["post_switch_host"] = prompt_post_switch_host(transport, receipt, deadline)
                         private_write(receipt_path, canonical(receipt))
                         transport, ready = wait_post_switch(transport, receipt, max(0, deadline - time.monotonic()), transports)
-                elif args.post_switch_host is not None:
+                elif args.post_switch_host is not None or args.post_switch_port is not None:
                     transport, ready = wait_post_switch(
                         transport, receipt, min(args.wait, ttl - 15), transports)
                 elif initialize:
@@ -1229,7 +1305,7 @@ def main(argv=None):
                     ready = wait_ready(transport, receipt["token"], min(args.wait, ttl - 15))
                     if not ready.get("reboot_required"):
                         device_progress.message("Reconnecting to the declared management address")
-                        transport = transports.enter_context(transport.reconnect(compiled["target_host"]))
+                        transport = transports.enter_context(transport.reconnect(compiled["target_host"], port=receipt_port(receipt, "post_switch_port", transport.port)))
                         ready = wait_initialized(transport, receipt, min(args.wait, ttl - 15),
                                                  initial_transport=initial_transport, receipt_path=receipt_path)
                     receipt.update({"host": transport.host, "user": transport.user, "port": transport.port})

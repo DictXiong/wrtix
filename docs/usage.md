@@ -91,3 +91,33 @@ That value must be a crypt password hash, not a plaintext login password. For
 third-party JSON or YAML files, put references inside `files.<path>.value` and
 select `format = "json"` or `"yaml"`. Use restrictive file modes for secrets.
 The same encrypted source and key may be referenced by multiple devices.
+
+### Changing the SSH port
+
+`--port` selects the initial connection; `--post-switch-port` selects the fresh
+connection used after activation or the planned reboot. Both accept 1–65535.
+Omitting the latter keeps the initial port. Ports describe the controller's SSH
+endpoint, which can differ from the listener port when using a forwarded port.
+The port flag does not edit Dropbear: declare that change in UCI/resources too.
+
+```sh
+openwrt-rebuild switch --flake .#gateway --device router --initialize \
+  --target-host 192.0.2.10 --port 22 --post-switch-port 12022
+```
+
+Combine it with `--post-switch-host` or `--ask-post-switch-host` when DHCP also
+changes the address. A new private SSH connection must verify the original host
+key and transaction before confirmation. An existing connection on the old port
+cannot stand in for this verification. A failed new connection leaves rollback
+armed under the original deadline.
+
+Receipts retain the original endpoint, last verified endpoint and candidate port
+separately. `status`/`rollback --receipt FILE` try saved endpoints, including the
+old port after timeout rollback. `confirm --receipt FILE` verifies the candidate
+port; use `--target-host` and `--port` to explicitly select a recovery endpoint.
+A receipt confirmation may also specify `--post-switch-port` when correcting the
+candidate endpoint. These operations require no flake or secret decryption.
+
+The original trusted host-key alias is retained within the transaction. For an
+unrelated later command at the new endpoint, normal OpenSSH known-host handling
+still applies; the tool does not silently authorize a new known-host entry.

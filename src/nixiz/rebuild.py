@@ -19,7 +19,7 @@ from progress import Progress
 HERE = Path(__file__).resolve().parent
 DEFAULT_FLAKE = Path("/etc/nixos/flake.nix")
 ACTIONS = ("build", "dry-run", "test", "switch", "verify", "status", "confirm", "rollback", "receipts", "clean")
-CONNECTION = ("target_host", "post_switch_host", "port", "control_socket", "jump_host", "known_hosts")
+CONNECTION = ("target_host", "post_switch_host", "post_switch_port", "port", "control_socket", "jump_host", "known_hosts")
 
 
 class RebuildError(ValueError):
@@ -55,6 +55,7 @@ def parse_args(argv=None):
     post.add_argument("--ask-post-switch-host", action="store_true",
                       help="Ask on the controlling terminal for the actual DHCP address after activation or reboot")
     parser.add_argument("--port", type=int)
+    parser.add_argument("--post-switch-port", type=int, help="SSH port after activation or reboot (default: keep initial port)")
     parser.add_argument("--control-socket", help="Reuse a caller-owned SSH master socket")
     parser.add_argument("--jump-host")
     parser.add_argument("--known-hosts")
@@ -66,6 +67,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.post_switch_port is not None and not 1 <= args.post_switch_port <= 65535:
+        parser.error("--post-switch-port must be between 1 and 65535")
     if args.older_than is not None and (args.action != "clean" or args.older_than < 0):
         parser.error("--older-than requires clean and a nonnegative number of days")
     if args.action in ("receipts", "clean"):
@@ -75,7 +78,7 @@ def parse_args(argv=None):
             parser.error(args.action + " only accepts --device, --quiet and, for clean, --older-than")
         return args, False
     receipt_mode = bool(args.receipt) and args.action in ("confirm", "rollback", "status", "switch")
-    if (args.post_switch_host is not None or args.ask_post_switch_host) and args.action not in ("test", "switch", "dry-run", "confirm"):
+    if (args.post_switch_host is not None or args.post_switch_port is not None or args.ask_post_switch_host) and args.action not in ("test", "switch", "dry-run", "confirm"):
         parser.error("post-switch connection options apply only to test, switch, dry-run or receipt confirmation")
     if args.initialize:
         if args.action not in ("test", "switch", "dry-run") or (args.action == "dry-run" and not args.remote):
@@ -95,7 +98,7 @@ def parse_args(argv=None):
             parser.error("build prepares the configuration bundle; select devices and connection options when applying it")
     elif not args.device and not args.all:
         parser.error("select --device NAME or --all")
-    if args.all and (args.ask_post_switch_host or any(getattr(args, field) is not None for field in ("target_host", "post_switch_host", "control_socket"))):
+    if args.all and (args.ask_post_switch_host or any(getattr(args, field) is not None for field in ("target_host", "post_switch_host", "post_switch_port", "control_socket"))):
         parser.error("per-device connection options require one --device")
     if args.action == "test" and args.all:
         parser.error("test requires one --device; each device has its own confirmation and rollback")

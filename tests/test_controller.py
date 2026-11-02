@@ -4,6 +4,7 @@
 """Generic producer boundaries and deployment safety regressions."""
 import argparse
 import copy
+import contextlib
 import io
 import json
 import os
@@ -268,6 +269,118 @@ class TransportTests(unittest.TestCase):
         self.assertIn("preconfirm_check_failed", openwrt.remote_failure(b"openwrt-deploy: preconfirm_check_failed\n", 1))
 
 
+class PortHandoffTests(unittest.TestCase):
+    def receipt(self, **extra):
+        return {"host": "192.0.2.2", "initial_host": "192.0.2.1", "initial_port": 22,
+                "port": 12022, "post_switch_host": "192.0.2.2", "post_switch_port": 12022,
+                "host_key_alias": "original", "token": TOKEN, "device_id": "node", "boot_id": BOOT,
+                "rollback_deadline": 100, **extra}
+
+    def test_explicit_reconnect_port_keeps_host_key_and_drops_old_socket(self):
+        initial = openwrt.Transport(connection_args(port=22, control_socket="/tmp/caller"), {}, compile_node(), "node")
+        with initial.reconnect("192.0.2.2", port=12022) as post:
+            self.assertEqual(post.port, 12022)
+            self.assertIsNone(post.args.control_socket)
+            self.assertEqual(post.host_key_alias, initial.host_key_alias)
+            self.assertIn("StrictHostKeyChecking=yes", post._ssh_options())
+        self.assertEqual(initial.port, 22)
+        for invalid in (0, 65536, True, "22"):
+            with self.assertRaises(openwrt.DeployError): initial.reconnect("192.0.2.2", port=invalid)
+
+    def test_status_and_rollback_include_original_endpoint_but_confirm_does_not(self):
+        for action in ("status", "rollback"):
+            args=connection_args(command=action)
+            self.assertEqual(openwrt.receipt_endpoints(args, self.receipt()), [("192.0.2.2",12022),("192.0.2.1",22)])
+        args=connection_args(command="confirm")
+        self.assertEqual(openwrt.receipt_endpoints(args,self.receipt()),[("192.0.2.2",12022)])
+        self.assertEqual(openwrt.receipt_endpoints(args,self.receipt(reboot_required=True,reboot_state="required")),
+                         [("192.0.2.2",12022),("192.0.2.1",22)])
+
+    def test_receipt_port_precedence_is_explicit(self):
+        for target in (None,"selected.example"):
+            for override, explicit_post, expected in ((None,None,12022),(2200,None,2200),(2200,13022,13022)):
+                args=connection_args(command="confirm",target_host=target,
+                                     _receipt_port_override=override,post_switch_port=explicit_post)
+                receipt=self.receipt(post_switch_port=explicit_post or 12022)
+                self.assertEqual(openwrt.receipt_endpoints(args,receipt)[0],(target or "192.0.2.2",expected))
+
+    def test_old_endpoint_fallback_requires_live_preboot_transaction(self):
+        args=connection_args(command="confirm")
+        for state,phase in (("confirmed","resumed"),("rolled-back","required"),("applied","resumed")):
+            status={"reboot_required":True,"state":state,"reboot_state":phase}
+            with self.assertRaisesRegex(openwrt.DeployError,"old endpoint cannot confirm"):
+                openwrt.verify_reboot_fallback(args,1,status)
+        openwrt.verify_reboot_fallback(args,1,{"reboot_required":True,"state":"applied","reboot_state":"required"})
+        openwrt.verify_reboot_fallback(args,0,{"state":"confirmed"})
+
+    def test_legacy_receipt_keeps_single_port_and_invalid_port_fails(self):
+        args=connection_args(command="status")
+        self.assertEqual(openwrt.receipt_endpoints(args,{"host":"router","port":2200}),[("router",2200)])
+        for field in ("initial_port","post_switch_port","port"):
+            with self.assertRaises(openwrt.DeployError): openwrt.receipt_endpoints(args,self.receipt(**{field:True}))
+
+    def test_old_connection_cannot_satisfy_candidate_port_verification(self):
+        initial=openwrt.Transport(connection_args(port=22),{},compile_node(),"node",host="192.0.2.1")
+        receipt=self.receipt(port=22)
+        status={"token":TOKEN,"device_id":"node","boot_id":BOOT,"state":"applied","reload_complete":True}
+        calls=[]
+        def call(transport, action):
+            calls.append((transport.port,action))
+            if transport.port==12022: raise openwrt.DeployError("SSH connection failed")
+            return status
+        with contextlib.ExitStack() as stack, patch.object(openwrt.Transport,'call',call), \
+                patch.object(openwrt.time,'time',return_value=0), patch.object(openwrt.time,'monotonic',side_effect=[0,0,2]), \
+                patch.object(openwrt.time,'sleep'):
+            with self.assertRaisesRegex(openwrt.DeployError,'not verified'):
+                openwrt.wait_post_switch(initial,receipt,1,stack)
+        self.assertEqual(calls,[(22,'status'),(12022,'status')])
+
+    def test_success_requires_candidate_port_and_same_transaction(self):
+        initial=openwrt.Transport(connection_args(port=22),{},compile_node(),"node",host="192.0.2.1")
+        status={"token":TOKEN,"device_id":"node","boot_id":BOOT,"state":"applied","reload_complete":True}
+        for valid in (True,False):
+            def call(transport,action):
+                return {**status,"token":TOKEN if valid or transport.port==22 else 'b'*32}
+            with contextlib.ExitStack() as stack, patch.object(openwrt.Transport,'call',call), patch.object(openwrt.time,'time',return_value=0):
+                if valid:
+                    post,_=openwrt.wait_post_switch(initial,self.receipt(),1,stack)
+                    self.assertEqual(post.port,12022)
+                else:
+                    with self.assertRaisesRegex(openwrt.DeployError,'identity differs'):
+                        openwrt.wait_post_switch(initial,self.receipt(),1,stack)
+
+    def test_receipt_status_recovers_old_port_and_confirm_never_uses_it(self):
+        status={"token":TOKEN,"device_id":"node","boot_id":BOOT,"state":"rolled-back","reload_complete":True}
+        calls=[]
+        def call(transport,action,token=None,data=None):
+            calls.append((transport.port,action))
+            if transport.port==12022: raise openwrt.DeployError("SSH connection refused")
+            return status
+        with tempfile.TemporaryDirectory() as tmp, patch.object(openwrt.Transport,'call',call), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            path=Path(tmp)/'receipt.json'
+            receipt=self.receipt(schema_version=1,protocol='nixiz-v1')
+            path.write_text(json.dumps(receipt))
+            openwrt.main(['status','--receipt',str(path),'--quiet'])
+            saved=json.loads(path.read_text())
+            self.assertEqual((saved['state'],saved['port'],saved['initial_port'],saved['post_switch_port']),
+                             ('rolled-back',22,22,12022))
+            self.assertIn((22,'status'),calls)
+            calls.clear()
+            with self.assertRaisesRegex(openwrt.DeployError,'endpoint unavailable'):
+                openwrt.main(['confirm','--receipt',str(path),'--quiet'])
+            self.assertEqual(calls,[(12022,'status')])
+
+    def test_receipt_update_does_not_erase_original_or_candidate_port(self):
+        receipt=self.receipt()
+        status={"token":TOKEN,"device_id":"node","boot_id":BOOT,"state":"rolled-back"}
+        transport=argparse.Namespace(host='192.0.2.1',port=22,user='root')
+        with patch.object(openwrt,'private_write'):
+            openwrt.save_transaction_status('/unused',receipt,status,transport)
+        self.assertEqual((receipt['port'],receipt['initial_port'],receipt['post_switch_port']),(22,22,12022))
+
+
+
 class RebuildTests(unittest.TestCase):
     def test_explicit_namespace_requires_no_discovery(self):
         with patch.object(rebuild, "nix_json", side_effect=AssertionError("must not query")):
@@ -284,6 +397,17 @@ class RebuildTests(unittest.TestCase):
 
     def test_nix_expression_literals_escape_interpolation(self):
         self.assertEqual(rebuild.nix_string('path:/tmp/${x}'), '"path:/tmp/\\${x}"')
+
+    def test_post_switch_port_validated_and_forwarded(self):
+        args,_=rebuild.parse_args(['switch','--device','node','--port','22','--post-switch-port','12022'])
+        forwarded=rebuild.controller_args(args,'deploy')
+        self.assertEqual(forwarded[forwarded.index('--post-switch-port')+1],'12022')
+        for invalid in ('0','65536'):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                rebuild.parse_args(['switch','--device','node','--post-switch-port',invalid])
+        for command in (['build'],['switch','--all'],['verify','--device','node']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                rebuild.parse_args([*command,'--post-switch-port','12022'])
 
     def test_receipt_recovery_never_needs_flake(self):
         args, recovery = rebuild.parse_args(["switch", "--receipt", "/tmp/receipt"])
