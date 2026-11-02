@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Best-effort stderr progress, with one coordinated animation per terminal."""
 from __future__ import annotations
 

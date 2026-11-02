@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Isolated, disposable official OpenWrt VM; never attaches host interfaces."""
 from __future__ import annotations
 import argparse
@@ -30,7 +28,7 @@ def prepare(directory, image):
         raise RuntimeError("VM directory must be empty")
     if hashlib.sha256(image.read_bytes()).hexdigest() != PIN["sha256"]:
         raise RuntimeError("official image checksum mismatch")
-    (directory / ".nixiz-vm").touch(mode=0o600)
+    (directory / ".wrtix-vm").touch(mode=0o600)
     disk = directory / "disk.img"
     with gzip.open(image, "rb") as src, disk.open("wb") as dst:
         shutil.copyfileobj(src, dst)
@@ -63,8 +61,8 @@ exit 0
         "mkdir /etc/dropbear\n"
         f"write {key}.pub /etc/dropbear/authorized_keys\n"
         "set_inode_field /etc/dropbear/authorized_keys mode 0100600\n"
-        f"write {setup} /etc/uci-defaults/99-nixiz-vm\n"
-        "set_inode_field /etc/uci-defaults/99-nixiz-vm mode 0100700\n"
+        f"write {setup} /etc/uci-defaults/99-wrtix-vm\n"
+        "set_inode_field /etc/uci-defaults/99-wrtix-vm mode 0100700\n"
     )
     with (directory / "image-prepare.log").open("w") as log:
         run(["debugfs", "-w", "-f", str(commands), str(root)], stdout=log, stderr=log)
@@ -75,8 +73,8 @@ exit 0
 
 
 def checked(directory):
-    if not (directory / ".nixiz-vm").is_file():
-        raise RuntimeError("not a disposable nixiz VM directory")
+    if not (directory / ".wrtix-vm").is_file():
+        raise RuntimeError("not a disposable wrtix VM directory")
 
 
 def start(directory, port, alternate_port):

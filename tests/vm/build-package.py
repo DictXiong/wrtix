@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Exercise the feed install recipe and emit an unsigned VM-only APK.
 
 A matching OpenWrt SDK remains the release packaging entry point. This small
@@ -17,7 +15,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-FEED = ROOT / 'feed/nixiz-agent'
+FEED = ROOT / 'feed/wrtix-agent'
 
 
 def main():
@@ -28,7 +26,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='nixiz-package-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='wrtix-package-') as tmp:
         work = Path(tmp)
         (work / 'include').mkdir()
         (work / 'rules.mk').write_text('')
@@ -46,14 +44,14 @@ include {FEED}/Makefile
 .PHONY: fixture
 fixture:
 \t$(Build/Prepare)
-\t$(call Package/nixiz-agent/install,{package_root})
+\t$(call Package/wrtix-agent/install,{package_root})
 ''')
         subprocess.run(['make', '-f', str(harness), 'fixture'], cwd=FEED, check=True,
                        stdout=subprocess.DEVNULL)
         source = (FEED / 'Makefile').read_text()
         scripts = {}
         for name in ('preinst', 'postinst', 'prerm'):
-            match = re.search(r'^define Package/nixiz-agent/' + name + r'\n(.*?)^endef$', source, re.M | re.S)
+            match = re.search(r'^define Package/wrtix-agent/' + name + r'\n(.*?)^endef$', source, re.M | re.S)
             if not match:
                 raise RuntimeError(f'missing feed script {name}')
             path = work / name
@@ -64,15 +62,15 @@ fixture:
         # start/stop ordering; this is material to active-transaction safety.
         metadata = package_root / 'lib/apk/packages'
         metadata.mkdir(parents=True)
-        listing = metadata / 'nixiz-agent.list'
+        listing = metadata / 'wrtix-agent.list'
         listing.write_text(''.join('/' + str(p.relative_to(package_root)) + '\n'
                                    for p in sorted(package_root.rglob('*')) if p.is_file()))
-        conffiles = re.search(r'^define Package/nixiz-agent/conffiles\n(.*?)^endef$', source, re.M | re.S)[1]
-        (metadata / 'nixiz-agent.conffiles').write_text(conffiles)
+        conffiles = re.search(r'^define Package/wrtix-agent/conffiles\n(.*?)^endef$', source, re.M | re.S)[1]
+        (metadata / 'wrtix-agent.conffiles').write_text(conffiles)
         for script, default in [('postinst', 'default_postinst'), ('prerm', 'default_prerm')]:
             body = scripts[script].read_text().split('\n', 1)[1]
-            scripts[script].write_text('#!/bin/sh\n. /lib/functions.sh\nexport root="${IPKG_INSTROOT}"\nexport pkgname=nixiz-agent\n' + default + '\n' + body)
-        argv = [args.apk, 'mkpkg', '--info', 'name:nixiz-agent', '--info', 'version:' + args.version,
+            scripts[script].write_text('#!/bin/sh\n. /lib/functions.sh\nexport root="${IPKG_INSTROOT}"\nexport pkgname=wrtix-agent\n' + default + '\n' + body)
+        argv = [args.apk, 'mkpkg', '--info', 'name:wrtix-agent', '--info', 'version:' + args.version,
                 '--info', 'arch:noarch', '--info', 'license:GPL-2.0-only',
                 '--info', 'description:Transactional OpenWrt configuration agent',
                 '--info', 'depends:jq uci ubus flock coreutils-timeout', '--files', str(package_root),

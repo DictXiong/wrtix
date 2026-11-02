@@ -1,6 +1,4 @@
 #!/bin/sh /etc/rc.common
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 START=03
 STOP=99
 USE_PROCD=1
@@ -10,12 +8,12 @@ USE_PROCD=1
 # script is sourced, before rc.common dispatches the requested action.
 case "${action:-}" in
  stop|disable|restart)
-  if [ -z "${IPKG_INSTROOT:-}" ] && [ -d /etc/nixiz ]; then
-   [ ! -L /etc/nixiz/transaction.lock ] || exit 1
-   exec 9> /etc/nixiz/transaction.lock
+  if [ -z "${IPKG_INSTROOT:-}" ] && [ -d /etc/wrtix ]; then
+   [ ! -L /etc/wrtix/transaction.lock ] || exit 1
+   exec 9> /etc/wrtix/transaction.lock
    flock -x 9 || exit 1
-   guard_state=/etc/nixiz/transactions/state
-   guard_status=$(/usr/libexec/nixiz/agent status) || exit 1
+   guard_state=/etc/wrtix/transactions/state
+   guard_status=$(/usr/libexec/wrtix/agent status) || exit 1
    printf '%s' "$guard_status" | jq -e '.state=="absent" or (.state=="confirmed" and .reload_complete==true) or .state=="rolled-back"' >/dev/null || exit 1
    [ ! -e "$guard_state/restore-pending" ] && [ ! -e "$guard_state/rollback-reboot" ] &&
     [ ! -e "$guard_state/rollback-incomplete" ] || exit 1
@@ -28,8 +26,8 @@ restart() {
  start "$@"
 }
 start_service() {
- local tool=/usr/libexec/nixiz/agent token
- local state=/etc/nixiz/transactions/state
+ local tool=/usr/libexec/wrtix/agent token
+ local state=/etc/wrtix/transactions/state
  [ -f "$tool" ] && [ ! -L "$tool" ] || return 1
  /bin/sh "$tool" early || return 1
  [ -f "$state/manifest.json" ] || return 0

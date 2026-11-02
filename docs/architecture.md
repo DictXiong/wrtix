@@ -1,7 +1,3 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # Architecture
 
 ## Configuration and policy
@@ -38,7 +34,7 @@ an agent or supplied master socket. A transaction creates and reuses a master wh
 needed. An SSH destination may be an alias, hostname or IP; it is not an implicit
 IPv4 topology. Public tooling has no default password or personal key.
 
-The target agent is package-owned. The controller requires protocol `nixiz-v2`
+The target agent is package-owned. The controller requires protocol `wrtix-v2`
 and the exact contract hash, then binds the installed engine and guard hashes to
 each transaction. It does not silently overwrite the runtime on each deployment.
 Install the compatible agent package first. There is one transaction path: agent
@@ -53,7 +49,7 @@ of any firmware release.
 
 ## Target transaction
 
-`nixiz-agent` owns `/etc/nixiz`, its lock, ownership ledger, identity and rollback
+`wrtix-agent` owns `/etc/wrtix`, its lock, ownership ledger, identity and rollback
 journal. First registration snapshots affected baseline resources including the
 previous unregistered state. Apply uses baseline comparison to reject concurrent
 changes. Files, service policy and managed credentials are restored on failure.
@@ -66,7 +62,7 @@ extend the original transaction arbitrarily. Private receipts retain transaction
 identity and recovery information without requiring the flake to evaluate again.
 
 Checks run in `preflight`, `preconfirm` or `postrollback` phases. Target executables
-are owned, hash-pinned files under `/usr/libexec/nixiz-managed/`; their input is
+are owned, hash-pinned files under `/usr/libexec/wrtix-managed/`; their input is
 private, and execution is bounded. They are trusted root programs. The API does
 not grant control of transaction deadlines or authentication, but it is not an OS
 sandbox against malicious administrator-supplied code.

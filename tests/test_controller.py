@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
 """Generic producer boundaries and deployment safety regressions."""
 import argparse
@@ -16,7 +14,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, Mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/nixiz"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/wrtix"))
 import compiler
 import openwrt
 import rebuild
@@ -55,7 +53,7 @@ class ResourceTests(unittest.TestCase):
 
     def test_minimum_device_has_no_network_or_password_policy(self):
         output = compile_node()
-        self.assertEqual(set(output["files"]), {"etc/nixiz/identity.json"})
+        self.assertEqual(set(output["files"]), {"etc/wrtix/identity.json"})
         self.assertEqual(output["target_host"], "node")
         self.assertEqual(output["ssh_port"], 22)
         self.assertFalse(output["root_password_managed"])
@@ -114,12 +112,12 @@ class ResourceTests(unittest.TestCase):
             compile_node({"ownership": {"requiredServices": ["demo"]}})
 
     def test_forbidden_and_guard_services_rejected(self):
-        for name, ownership in (("demo", {"forbiddenServices": ["demo"]}), ("nixiz-agent", {})):
+        for name, ownership in (("demo", {"forbiddenServices": ["demo"]}), ("wrtix-agent", {})):
             with self.subTest(name=name), self.assertRaises(compiler.CompileError):
                 compile_node({"services": {name: {"enable": True}}, "ownership": ownership})
 
     def test_paths_and_raw_uci_ownership_are_protected(self):
-        for path in ("/etc/shadow", "/etc/nixiz/identity.json", "/etc/../tmp/foo", "/etc/init.d/nixiz-agent", "/etc/config/network"):
+        for path in ("/etc/shadow", "/etc/wrtix/identity.json", "/etc/../tmp/foo", "/etc/init.d/wrtix-agent", "/etc/config/network"):
             with self.subTest(path=path), self.assertRaises(compiler.CompileError):
                 compile_node({"files": {path: {"text": "x"}}})
 
@@ -151,7 +149,7 @@ class ResourceTests(unittest.TestCase):
                 compile_node({"resolver": {"target": target}})
 
     def test_check_executable_must_be_owned_and_executable(self):
-        check = {"phase": "preconfirm", "executable": "/usr/libexec/nixiz-managed/check", "input": {"private": "value"}}
+        check = {"phase": "preconfirm", "executable": "/usr/libexec/wrtix-managed/check", "input": {"private": "value"}}
         with self.assertRaises(compiler.CompileError):
             compile_node({"checks": {"check": check}})
         node = {"checks": {"check": check}, "files": {check["executable"]: {"text": "#!/bin/sh\nexit 0\n", "mode": "0700"}}}
@@ -218,12 +216,12 @@ class TransportTests(unittest.TestCase):
 
     def test_no_runtime_upload_or_default_password(self):
         compiled = compile_node()
-        contract = {"profile": "nixiz-v2", "identity": {"device_id": "node"},
+        contract = {"profile": "wrtix-v2", "identity": {"device_id": "node"},
                     "contract_sha256": compiled["contract_sha256"], "engine_sha256": "a" * 64, "guard_sha256": "b" * 64}
         with self.transport() as transport, patch.object(transport, "run", return_value=json.dumps(contract).encode()) as run:
             transport.ensure_engine()
             self.assertEqual(run.call_count, 1)
-            self.assertEqual(run.call_args.args[0], "sh /usr/libexec/nixiz/agent identity")
+            self.assertEqual(run.call_args.args[0], "sh /usr/libexec/wrtix/agent identity")
             self.assertIsNone(run.call_args.kwargs.get("data"))
 
     def test_preflight_rejects_wrong_device_and_accepts_explicit_unenrolled(self):
@@ -238,7 +236,7 @@ class TransportTests(unittest.TestCase):
     def test_protocol_requires_current_package_agent(self):
         self.assertNotIn("native_runtime", compile_node())
         with self.transport() as transport, patch.object(transport, "run", return_value=json.dumps({
-                "profile":"nixiz-v1", "identity":{"device_id":"node"},
+                "profile":"wrtix-v1", "identity":{"device_id":"node"},
                 "contract_sha256":"a"*64,"engine_sha256":"b"*64,"guard_sha256":"c"*64}).encode()):
             with self.assertRaisesRegex(openwrt.DeployError, "incompatible"):
                 transport.agent_contract()
@@ -248,7 +246,7 @@ class TransportTests(unittest.TestCase):
         compiled.update(engine_sha256="a"*64, guard_sha256="b"*64)
         baseline = {"boot_id": BOOT, "identity": {"device_id": ""}, "files": {}, "modes": {}, "services": {}}
         tx, data = openwrt.pending_bundle(compiled, baseline, "node", 120, {}, initialize=True)
-        self.assertEqual(tx["kind"], "nixiz-transaction")
+        self.assertEqual(tx["kind"], "wrtix-transaction")
         self.assertNotIn("bridge_mac", tx)
         self.assertFalse(tx["root_password_managed"])
         self.assertEqual(tx["engine_sha256"], "a" * 64)
@@ -370,7 +368,7 @@ class PortHandoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(openwrt.Transport,'call',call), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             path=Path(tmp)/'receipt.json'
-            receipt=self.receipt(schema_version=1,protocol='nixiz-v2')
+            receipt=self.receipt(schema_version=1,protocol='wrtix-v2')
             path.write_text(json.dumps(receipt))
             openwrt.main(['status','--receipt',str(path),'--quiet'])
             saved=json.loads(path.read_text())

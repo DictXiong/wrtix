@@ -1,6 +1,4 @@
 #!/bin/sh
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # Versioned configuration transaction. Package/firmware operations are excluded.
 set -eu
 umask 077
@@ -18,11 +16,11 @@ else
  export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 fi
 p() { printf '%s%s' "$SYSROOT" "$1"; }
-BASE=$(p /etc/nixiz/transactions)
+BASE=$(p /etc/wrtix/transactions)
 STATE=$BASE/state
 ARCHIVES=$BASE/archives
-LEDGER=etc/nixiz/managed.json
-GUARD=$(p /etc/init.d/nixiz-agent)
+LEDGER=etc/wrtix/managed.json
+GUARD=$(p /etc/init.d/wrtix-agent)
 BOOT=$(p /proc/sys/kernel/random/boot_id)
 UPTIME=$(p /proc/uptime)
 fail() {
@@ -43,9 +41,9 @@ now() { cut -d. -f1 "$UPTIME"; }
 record() { printf '%s\n' "$2" > "$STATE/$1.new.$$"; mv "$STATE/$1.new.$$" "$STATE/$1"; }
 secure_dir() { [ -d "$1" ] && [ ! -L "$1" ]; }
 lock() {
- mkdir -p "$(p /etc/nixiz)"
- [ ! -L "$(p /etc/nixiz/transaction.lock)" ] || fail unsafe_lock
- exec 9> "$(p /etc/nixiz/transaction.lock)"
+ mkdir -p "$(p /etc/wrtix)"
+ [ ! -L "$(p /etc/wrtix/transaction.lock)" ] || fail unsafe_lock
+ exec 9> "$(p /etc/wrtix/transaction.lock)"
  flock -x 9
 }
 unlock() { flock -u 9; }
@@ -55,7 +53,7 @@ tool() {
 valid_token() { case "$1" in *[!0-9a-f]*|'') return 1;; esac; [ "${#1}" = 32 ]; }
 no_system_operation() {
  local path pending
- [ ! -e "$(p /etc/nixiz/package-operation)" ] || fail package_operation_active
+ [ ! -e "$(p /etc/wrtix/package-operation)" ] || fail package_operation_active
  for path in /tmp/sysupgrade /tmp/sysupgrade.tgz /tmp/sysupgrade-trigger; do
   [ ! -e "$(p "$path")" ] || fail firmware_operation_active
  done
@@ -65,18 +63,18 @@ no_system_operation() {
  fi
 }
 valid_service() {
- case "$1" in ''|*[!A-Za-z0-9_.+-]*|[.+-]*|nixiz-agent) return 1;; esac
+ case "$1" in ''|*[!A-Za-z0-9_.+-]*|[.+-]*|wrtix-agent) return 1;; esac
  [ "${#1}" -le 64 ]
 }
 allowed() {
  case "$1" in ''|/*|*/|*//*|*[!A-Za-z0-9_./+-]*) return 1;; esac
  case "/$1/" in */../*|*/./*) return 1;; esac
  case "$1" in
- etc/nixiz/identity.json|etc/nixiz/root-password-hash) return 0;;
- etc/shadow|etc/passwd|etc/group|etc/gshadow|etc/resolv.conf|etc/ssh/*|etc/dropbear/dropbear_*|etc/init.d/nixiz-agent|etc/nixiz/*) return 1;;
- etc/init.d/*) case "$1" in etc/init.d/nixiz-managed-*) return 0;; *) return 1;; esac;;
+ etc/wrtix/identity.json|etc/wrtix/root-password-hash) return 0;;
+ etc/shadow|etc/passwd|etc/group|etc/gshadow|etc/resolv.conf|etc/ssh/*|etc/dropbear/dropbear_*|etc/init.d/wrtix-agent|etc/wrtix/*) return 1;;
+ etc/init.d/*) case "$1" in etc/init.d/wrtix-managed-*) return 0;; *) return 1;; esac;;
  etc/rc.d/*) return 1;;
- etc/*|usr/libexec/nixiz-managed/*) return 0;;
+ etc/*|usr/libexec/wrtix-managed/*) return 0;;
  *) return 1;;
  esac
 }
@@ -102,21 +100,21 @@ file_mode() {
  awk -v p="$bits" 'BEGIN{n=0;for(i=1;i<=9;i++){n*=2;if(substr(p,i,1)!="-")n++}printf "%03o\n",n}'
 }
 agent_ready() {
- plain "$(p /usr/share/nixiz/contract.json)" && plain "$GUARD" || fail missing_agent_runtime
- [ ! -e "$(p /etc/nixiz/package-operation)" ] || fail package_operation_active
+ plain "$(p /usr/share/wrtix/contract.json)" && plain "$GUARD" || fail missing_agent_runtime
+ [ ! -e "$(p /etc/wrtix/package-operation)" ] || fail package_operation_active
 }
 agent_identity() {
- local device_id= board_name= contract=$(p /usr/share/nixiz/contract.json) password=true resolver=true
+ local device_id= board_name= contract=$(p /usr/share/wrtix/contract.json) password=true resolver=true
  agent_ready
- jq -e '.schema_version==1 and .profile=="nixiz-v2"' "$contract" >/dev/null || fail incompatible_agent
- if [ -e "$(p /etc/nixiz/identity.json)" ]; then
-  regular_or_absent etc/nixiz/identity.json || fail invalid_identity
-  [ "$(file_mode "$(p /etc/nixiz/identity.json)")" = 600 ] || fail invalid_identity
-  device_id=$(jq -er 'select(.schema_version==1)|.device_id|select(type=="string" and length>0 and length<=64)' "$(p /etc/nixiz/identity.json)") || fail invalid_identity
+ jq -e '.schema_version==1 and .profile=="wrtix-v2"' "$contract" >/dev/null || fail incompatible_agent
+ if [ -e "$(p /etc/wrtix/identity.json)" ]; then
+  regular_or_absent etc/wrtix/identity.json || fail invalid_identity
+  [ "$(file_mode "$(p /etc/wrtix/identity.json)")" = 600 ] || fail invalid_identity
+  device_id=$(jq -er 'select(.schema_version==1)|.device_id|select(type=="string" and length>0 and length<=64)' "$(p /etc/wrtix/identity.json)") || fail invalid_identity
  fi
  if plain "$(p /tmp/sysinfo/board_name)"; then board_name=$(cat "$(p /tmp/sysinfo/board_name)"); fi
- if plain "$(p /etc/nixiz/root-password-hash)"; then
-  [ "$(awk -F: '$1=="root"{print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/nixiz/root-password-hash)")" ] || password=false
+ if plain "$(p /etc/wrtix/root-password-hash)"; then
+  [ "$(awk -F: '$1=="root"{print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/wrtix/root-password-hash)")" ] || password=false
  fi
  if plain "$(p /$LEDGER)"; then
   local target
@@ -125,7 +123,7 @@ agent_identity() {
    [ -L "$(p /etc/resolv.conf)" ] && [ "$(readlink "$(p /etc/resolv.conf)")" = "$target" ] || resolver=false
   fi
  fi
- jq -cn --arg id "$device_id" --arg board "$board_name" --arg boot "$(boot)" --arg contract "$(sha "$contract")" --arg engine "$(sha "$SELF")" --arg guard "$(sha "$GUARD")" --argjson password "$password" --argjson resolver "$resolver" '{schema_version:1,profile:"nixiz-v2",identity:{device_id:$id,board_name:$board},boot_id:$boot,contract_sha256:$contract,engine_sha256:$engine,guard_sha256:$guard,root_password_synced:$password,resolver_correct:$resolver}'
+ jq -cn --arg id "$device_id" --arg board "$board_name" --arg boot "$(boot)" --arg contract "$(sha "$contract")" --arg engine "$(sha "$SELF")" --arg guard "$(sha "$GUARD")" --argjson password "$password" --argjson resolver "$resolver" '{schema_version:1,profile:"wrtix-v2",identity:{device_id:$id,board_name:$board},boot_id:$boot,contract_sha256:$contract,engine_sha256:$engine,guard_sha256:$guard,root_password_synced:$password,resolver_correct:$resolver}'
 }
 reload_error_code() {
  case "$1" in
@@ -192,7 +190,7 @@ service_links() {
 }
 safe_init_deletion() {
  local name enabled=false running links
- case "$1" in etc/init.d/nixiz-managed-*) name=${1#etc/init.d/};; *) return 0;; esac
+ case "$1" in etc/init.d/wrtix-managed-*) name=${1#etc/init.d/};; *) return 0;; esac
  valid_service "$name" || fail unsafe_service_name
  if [ -x "$(p /etc/init.d/$name)" ]; then service_exec "$name" enabled && enabled=true; fi
  [ "$enabled" = false ] || fail init_service_must_be_disabled
@@ -246,7 +244,7 @@ resolver_state() {
 request_paths() {
  jq -r '.paths[]' "$1" || return 1
  printf '%s\n' "$LEDGER" || return 1
- if jq -e '.paths|index("etc/nixiz/root-password-hash")!=null' "$1" >/dev/null; then printf '%s\n' etc/shadow; fi
+ if jq -e '.paths|index("etc/wrtix/root-password-hash")!=null' "$1" >/dev/null; then printf '%s\n' etc/shadow; fi
 }
 check_request() {
  jq -se 'length==1 and (.[0]|type=="object" and keys==["paths","services"] and (.paths|type=="array" and length<=128 and all(.[];type=="string" and length>0)) and (.services|type=="array" and length<=128 and all(.[];type=="string")) and (.paths|length==(unique|length)) and (.services|length==(unique|length)))' "$1" >/dev/null 2>&1 || fail invalid_check_request
@@ -272,7 +270,7 @@ snapshot() {
  services=$(snapshot_services "$request") || { rm -rf "$work"; return 1; }
  resolver=$(resolver_state) || fail resolver_snapshot_failed
  if plain "$(p /$LEDGER)"; then
-  ledger=$(jq -ce 'select(.schema_version==1 and .kind=="nixiz-owned-resources" and (.files|type)=="array")' "$(p /$LEDGER)") || { rm -rf "$work"; fail invalid_owned_ledger; }
+  ledger=$(jq -ce 'select(.schema_version==1 and .kind=="wrtix-owned-resources" and (.files|type)=="array")' "$(p /$LEDGER)") || { rm -rf "$work"; fail invalid_owned_ledger; }
  fi
  boot_id=$(boot) || fail boot_identity_unavailable
  jq -sc --arg boot "$boot_id" --argjson contract "$contract" --argjson services "$services" --argjson resolver "$resolver" --argjson ledger "$ledger" \
@@ -345,7 +343,7 @@ status() {
 valid_manifest() {
  jq -se '
  def hex: type=="string" and length==64 and (explode|all(.[];(.>=48 and .<=57)or(.>=97 and .<=102)));
- length==1 and (.[0] | .schema_version==1 and .kind=="nixiz-transaction" and
+ length==1 and (.[0] | .schema_version==1 and .kind=="wrtix-transaction" and
  ((keys-["schema_version","kind","token","boot_id","device_id","board_names","contract_sha256","resolver_target","ttl_seconds","initialize","baseline","files","services","managed_services","changed_paths","engine_sha256","guard_sha256","root_password_managed","checks"])|length==0) and
  (.token|type=="string" and length==32 and (explode|all(.[];(.>=48 and .<=57)or(.>=97 and .<=102)))) and
  (.boot_id|type=="string" and length==36) and (.engine_sha256|hex) and (.guard_sha256|hex) and (.device_id|type=="string" and length>=1 and length<=64) and
@@ -361,7 +359,7 @@ valid_manifest() {
   ([.[].path]|length==(unique|length)) and ([.[]|select(.delete==false)|.payload]|length==(unique|length))) and
  (.managed_services|type=="array" and all(.[];type=="string") and length==(unique|length)) and
  (. as $m | all(.managed_services[]; . as $s | $m.services|has($s))) and
- (.services|type=="object" and length<=128 and (keys|all(.[];. != "nixiz-agent")) and all(.[];
+ (.services|type=="object" and length<=128 and (keys|all(.[];. != "wrtix-agent")) and all(.[];
    (if has("reload") then (.reload|type)=="boolean" else true end) and
    (if has("oneshot") then (.oneshot|type)=="boolean" else true end) and
    (.enable|type=="boolean") and ((.running|type=="boolean") or .running==null) and (.action=="reload" or .action=="restart") and (.enable or (.running==false)))))
@@ -1167,7 +1165,7 @@ stage() {
  manifest_request "$incoming/manifest.json" > "$incoming/request.json"
  jq '. as $m | [.files[] | . as $f | select(if .delete then $m.baseline.files[$f.path]!=null else .sha256!=$m.baseline.files[$f.path] or .mode!=$m.baseline.modes[$f.path] end) | .path]' "$incoming/manifest.json" > "$incoming/changed-paths.json"
  jq .baseline "$incoming/manifest.json" > "$incoming/baseline.json"
- jq '{schema_version:1,kind:"nixiz-owned-resources",device_id,files:[.files[]|select(.delete==false)|.path],services:.managed_services,resolver_target}' "$incoming/manifest.json" > "$incoming/ledger.json"
+ jq '{schema_version:1,kind:"wrtix-owned-resources",device_id,files:[.files[]|select(.delete==false)|.path],services:.managed_services,resolver_target}' "$incoming/manifest.json" > "$incoming/ledger.json"
  rm "$incoming/bundle.tar"
  [ -z "$previous_token" ] || mv "$STATE" "$ARCHIVES/$previous_token"
  mv "$incoming" "$STATE"
@@ -1216,40 +1214,40 @@ apply() {
  unlock; status
 }
 root_password_managed() {
- jq -e 'any(.files[]; .path=="etc/nixiz/root-password-hash" and (.delete|not))' "$STATE/manifest.json" >/dev/null
+ jq -e 'any(.files[]; .path=="etc/wrtix/root-password-hash" and (.delete|not))' "$STATE/manifest.json" >/dev/null
 }
 root_password_matches() {
  root_password_managed || return 0
- plain "$(p /etc/nixiz/root-password-hash)" && plain "$(p /etc/shadow)" || return 1
- [ "$(awk -F: '$1=="root"{print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/nixiz/root-password-hash)")" ]
+ plain "$(p /etc/wrtix/root-password-hash)" && plain "$(p /etc/shadow)" || return 1
+ [ "$(awk -F: '$1=="root"{print $2}' "$(p /etc/shadow)")" = "$(cat "$(p /etc/wrtix/root-password-hash)")" ]
 }
 root_password_apply() {
  root_password_managed || return 0
  root_password_matches && return 0
- local material=$(p /etc/nixiz/root-password-hash) shadow=$(p /etc/shadow) hash
+ local material=$(p /etc/wrtix/root-password-hash) shadow=$(p /etc/shadow) hash
  plain "$material" && plain "$shadow" && [ "$(wc -l < "$material" | tr -d ' ')" = 1 ] || fail invalid_password_material
  IFS= read -r hash < "$material"
  case "$hash" in '$6$'*|'$5$'*|'$y$'*) :;; *) fail invalid_password_material;; esac
  case "$hash" in *:*|*' '*) fail invalid_password_material;; esac
  [ "$(awk -F: '$1=="root"{n++}END{print n+0}' "$shadow")" = 1 ] || fail invalid_shadow
- awk 'BEGIN{FS=OFS=":"} FNR==NR{hash=$0;next}$1=="root"{$2=hash}{print}' "$material" "$shadow" > "$shadow.nixiz-new.$$"
- chmod 600 "$shadow.nixiz-new.$$"; mv "$shadow.nixiz-new.$$" "$shadow"
+ awk 'BEGIN{FS=OFS=":"} FNR==NR{hash=$0;next}$1=="root"{$2=hash}{print}' "$material" "$shadow" > "$shadow.wrtix-new.$$"
+ chmod 600 "$shadow.wrtix-new.$$"; mv "$shadow.wrtix-new.$$" "$shadow"
  root_password_matches || fail root_password_sync_failed
 }
 validate_identity_payload() {
  local base=$1 payload
- payload=$(jq -er '.files[]|select(.path=="etc/nixiz/identity.json" and .delete==false and .mode=="600")|.payload' "$base/manifest.json") || fail missing_candidate_identity
+ payload=$(jq -er '.files[]|select(.path=="etc/wrtix/identity.json" and .delete==false and .mode=="600")|.payload' "$base/manifest.json") || fail missing_candidate_identity
  jq -se --slurpfile m "$base/manifest.json" 'length==1 and (.[0]|type=="object" and (keys|sort)==["device_id","schema_version"] and .schema_version==1 and .device_id==$m[0].device_id)' "$base/candidate/${payload#payload/}" >/dev/null || fail invalid_candidate_identity
 }
 run_checks() {
  local phase=$1 base=$2 row name executable payload digest timeout input work source
- work=$(mktemp -d "$(p /tmp)/nixiz-checks.XXXXXX") || return 1
+ work=$(mktemp -d "$(p /tmp)/wrtix-checks.XXXXXX") || return 1
  jq -c --arg phase "$phase" '.checks//[]|.[]|select(.phase==$phase)' "$base/manifest.json" > "$work/rows" || { rm -rf "$work"; return 1; }
  while IFS= read -r row; do
   printf '%s\n' "$row" > "$work/check.json"
   name=$(jq -er .name "$work/check.json") || { rm -rf "$work"; return 1; }
   executable=$(jq -er .executable "$work/check.json") || { rm -rf "$work"; return 1; }
-  case "$executable" in /usr/libexec/nixiz-managed/*) :;; *) rm -rf "$work"; return 1;; esac
+  case "$executable" in /usr/libexec/wrtix-managed/*) :;; *) rm -rf "$work"; return 1;; esac
   allowed "${executable#/}" || { rm -rf "$work"; return 1; }
   payload=$(jq -er --arg p "${executable#/}" '.files[]|select(.path==$p and .delete==false and (.mode=="700" or .mode=="755"))|.payload' "$base/manifest.json") || { rm -rf "$work"; return 1; }
   source="$base/candidate/${payload#payload/}"
@@ -1267,7 +1265,7 @@ run_checks() {
 
 verify_installed() (
  local work row executable rel payload index=0 source mode
- work=$(mktemp -d "$(p /tmp)/nixiz-verify.XXXXXX") || fail check_workspace_failed
+ work=$(mktemp -d "$(p /tmp)/wrtix-verify.XXXXXX") || fail check_workspace_failed
  trap 'rm -rf "$work"' EXIT
  head -c 1048577 > "$work/request.json"
  [ "$(wc -c < "$work/request.json" | tr -d ' ')" -le 1048576 ] || fail request_too_large
@@ -1277,7 +1275,7 @@ verify_installed() (
  jq -c '.checks[]' "$work/request.json" > "$work/rows"
  while IFS= read -r row; do
   executable=$(printf '%s' "$row" | jq -er .executable) || fail invalid_checks
-  case "$executable" in /usr/libexec/nixiz-managed/*) :;; *) fail invalid_checks;; esac
+  case "$executable" in /usr/libexec/wrtix-managed/*) :;; *) fail invalid_checks;; esac
   rel=${executable#/}
   allowed "$rel" && regular_or_absent "$rel" && plain "$(p /$rel)" || fail invalid_checks
   plain "$(p /$LEDGER)" && jq -e --arg p "$rel" '.files|index($p)!=null' "$(p /$LEDGER)" >/dev/null || fail check_not_owned

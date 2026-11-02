@@ -1,26 +1,22 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # OpenWrt feed
 
 Add the **repository root** as an OpenWrt feed; package discovery finds
-`feed/nixiz-agent/Makefile`. In the matching OpenWrt SDK/build tree's
+`feed/wrtix-agent/Makefile`. In the matching OpenWrt SDK/build tree's
 `feeds.conf`, pin a reviewed commit (replace `<commit>`):
 
 ```text
-src-git nixiz https://github.com/DictXiong/nixiz.git^<commit>
+src-git wrtix https://github.com/DictXiong/wrtix.git^<commit>
 ```
 
 For a local checkout instead:
 
 ```text
-src-link nixiz /absolute/path/to/nixiz
+src-link wrtix /absolute/path/to/wrtix
 ```
 
-Then run `./scripts/feeds update nixiz`,
-`./scripts/feeds install -p nixiz nixiz-agent`, select the package and build
-`make package/nixiz-agent/compile`. This requires an SDK/build tree matching
+Then run `./scripts/feeds update wrtix`,
+`./scripts/feeds install -p wrtix wrtix-agent`, select the package and build
+`make package/wrtix-agent/compile`. This requires an SDK/build tree matching
 the target OpenWrt release. The package contains architecture-independent
 scripts; dependency and package-format compatibility still depend on the
 release. The Makefile resolves the original checkout through feed symlinks
@@ -34,7 +30,7 @@ before removing that marker. If installation fails, repair/reinstall the
 package; do not remove the marker to bypass incomplete installation.
 
 Removing the package stops only its own guard and retains configuration and
-private state. A new firmware image must include a compatible `nixiz-agent`
+private state. A new firmware image must include a compatible `wrtix-agent`
 package to continue managing retained configuration after sysupgrade.
 
 ## Lifecycle boundaries
@@ -47,7 +43,7 @@ configuration baseline participate in the first transaction's rollback.
 
 On OpenWrt 25.12, APK commit hooks enforce the lifecycle gate **before** package
 files can change. A failing APK package script alone does not veto removal.
-The global pre-commit hook therefore rejects any package commit while a nixiz
+The global pre-commit hook therefore rejects any package commit while a wrtix
 transaction is active; a post-commit hook validates the installed runtime and
 contract before unblocking deployment. Do not bypass APK commit hooks. Root can
 always bypass package policy; such operations are outside the transaction model.

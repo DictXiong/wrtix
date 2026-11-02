@@ -1,13 +1,9 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
-# nixiz
+# wrtix
 
 Declarative OpenWrt configuration with Nix, authenticated SSH deployment and
 confirmed configuration transactions.
 
-nixiz provides typed resources, user-defined profile modules, runtime SOPS secret
+wrtix provides typed resources, user-defined profile modules, runtime SOPS secret
 resolution and an OpenWrt target package. It does not prescribe a router topology,
 wireless policy, management subnet or initial credentials. It can manage a device
 without wireless, a bridge or custom MAC addresses.
@@ -20,7 +16,7 @@ and obtains its own management address by DHCP. Existing SSH credentials are
 preserved. **No custom profile or validator is needed.**
 
 Prerequisites: Linux with Nix flakes enabled, SSH access, and a matching
-[`nixiz-agent` package](feed/README.md) installed on OpenWrt. The agent is built
+[`wrtix-agent` package](feed/README.md) installed on OpenWrt. The agent is built
 through an OpenWrt feed; it is not yet in the official package repositories.
 The example targets standard OpenWrt with individually named LAN devices, the
 usual LAN firewall zone, and a 2.4GHz mac80211 radio. Check the actual port and
@@ -28,7 +24,7 @@ PHY names first; the sample values are not hardware detection.
 
 ```sh
 mkdir my-routers && cd my-routers
-nix flake init --template github:DictXiong/nixiz#ap
+nix flake init --template github:DictXiong/wrtix#ap
 ```
 
 Edit the small settings block in the generated `flake.nix`:
@@ -70,7 +66,7 @@ sops --age "$(age-keygen -y "$SOPS_AGE_KEY_FILE")" secrets.yaml
 ```
 
 In the SOPS editor, set `wifi_password` to your chosen password and save. SOPS
-writes ciphertext; do not put the plaintext password in Nix. nixiz decrypts it
+writes ciphertext; do not put the plaintext password in Nix. wrtix decrypts it
 only at deployment time. If this directory is in Git, add `flake.nix`, `ap.nix`
 and the **encrypted** `secrets.yaml` so Nix can see them; never add the age key.
 
@@ -91,9 +87,9 @@ prompt, look up the upstream router's DHCP lease and enter the AP's new SSH
 address. The original rollback deadline stays active while you do so; failed
 verification or missing confirmation restores the affected configuration.
 
-The template uses the same locked nixiz version for its controller and
+The template uses the same locked wrtix version for its controller and
 configuration. SSH uses your existing credentials or agent and asks before
-trusting an unknown host key. For NixOS, import `nixiz.nixosModules.default` and
+trusting an unknown host key. For NixOS, import `wrtix.nixosModules.default` and
 use the same `services.openwrt` resources; the two CLI commands are installed
 automatically. The `#minimal` template demonstrates managing just one file,
 without a network change or any secret setup.
@@ -110,5 +106,7 @@ without a network change or any secret setup.
 This initial implementation is experimental. Do not interpret module or unit
 tests as proof of hardware compatibility. Configuration rollback does not
 roll back firmware, package installations or arbitrary extension side effects.
+
+This project is developed with AI-assisted programming.
 
 Licensed under GPL-2.0-only; see [COPYING](COPYING) and [NOTICE](NOTICE.md).

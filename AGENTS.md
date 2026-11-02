@@ -1,10 +1,6 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # Development rules
 
-nixiz manages declared OpenWrt resources. Keep topology, hardware policy, address
+wrtix manages declared OpenWrt resources. Keep topology, hardware policy, address
 allocation, wireless presets and personal defaults in consumer modules. A user
 profile must compile through the same ownership and validation pipeline as direct
 resources. Never add a built-in profile to accommodate one downstream device.
@@ -28,6 +24,6 @@ and require KVM and network access. Test results must distinguish pure evaluatio
 simulated target execution, official OpenWrt VM and physical device validation.
 Documentation describes supported behavior and limitations, not work diaries.
 
-For newly AI-generated source/docs retain the two-line attribution above in the
-file's legal comment syntax. Machine-readable generated data carries no AI field.
-Only a human review can remove existing attribution.
+Keep the project-wide AI assistance disclosure in README.md only; do not add
+per-file AI-generation headers. Preserve copyright, license and upstream source
+notices. Generated machine-readable data must not carry AI attribution fields.

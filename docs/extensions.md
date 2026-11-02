@@ -1,8 +1,4 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
-# Extending nixiz
+# Extending wrtix
 
 ## Typed profiles
 
@@ -32,7 +28,7 @@ whole fleet. References to undeclared or disabled devices fail evaluation.
 
 The cross-device output does not feed back into `fleet`. Compute deterministic
 address tables or equivalent associations once from that base input, then derive
-all peer resources from the same table. nixiz itself assigns no addresses and
+all peer resources from the same table. wrtix itself assigns no addresses and
 knows no neighbor or radio policy.
 
 ## Ownership and overrides
@@ -51,7 +47,7 @@ all required extension checks.
 ## Required checks
 
 Custom checks are optional. Direct resource configurations need no validator or
-check executable: nixiz already validates resource types, ownership, paths,
+check executable: wrtix already validates resource types, ownership, paths,
 permissions and transaction consistency. A simple profile can use Nix
 `assertions` alone. Add executable checks only when a constraint requires
 resolved secrets, final merged resources or live device state.
@@ -70,7 +66,7 @@ an attribute-set `input`. Timeouts are bounded; every declared check is required
 - `postrollback`: target check during restoration. Failure leaves recovery
   incomplete rather than reporting success.
 
-Target executables must be owned files under `/usr/libexec/nixiz-managed/`, mode
+Target executables must be owned files under `/usr/libexec/wrtix-managed/`, mode
 `0700` or `0755`, with the expected digest. They receive only their resolved
 `input` as stdin. Package requirements must explicitly include any tools they
 need. A missing binary or timed-out check is a failure.

@@ -1,7 +1,3 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # Official OpenWrt VM acceptance
 
 `image.json` pins the official OpenWrt 25.12.0 x86/64 ext4 combined image and
@@ -15,9 +11,9 @@ Keep the working directory outside the Git checkout. It contains a disposable
 private SSH key, guest disk, console logs and transaction evidence.
 
 ```sh
-python3 tests/vm/machine.py --directory /tmp/nixiz-vm prepare
-python3 tests/vm/machine.py --directory /tmp/nixiz-vm start
-python3 tests/vm/machine.py --directory /tmp/nixiz-vm ssh 'cat /etc/openwrt_release'
+python3 tests/vm/machine.py --directory /tmp/wrtix-vm prepare
+python3 tests/vm/machine.py --directory /tmp/wrtix-vm start
+python3 tests/vm/machine.py --directory /tmp/wrtix-vm ssh 'cat /etc/openwrt_release'
 ```
 
 The harness injects only test connectivity and an ephemeral authorized key
@@ -31,7 +27,7 @@ To exercise the feed install recipe without compiling a complete firmware,
 use apk-tools **3** to build a local test artifact:
 
 ```sh
-python3 tests/vm/build-package.py --apk /path/to/apk --output /tmp/nixiz-agent.apk
+python3 tests/vm/build-package.py --apk /path/to/apk --output /tmp/wrtix-agent.apk
 ```
 
 The helper evaluates the feed's install recipe and scriptlets, including the
@@ -47,7 +43,7 @@ while a configuration transaction is pending. The latter must fail before any
 runtime or guard is removed. After controller acceptance, stop the guest:
 
 ```sh
-python3 tests/vm/machine.py --directory /tmp/nixiz-vm stop
+python3 tests/vm/machine.py --directory /tmp/wrtix-vm stop
 ```
 
 The controller acceptance suite should cover registration, idempotency, actual
@@ -64,9 +60,9 @@ Run the controller's real transaction suite after installing the package:
 
 ```sh
 python3 tests/vm/controller_acceptance.py \
-  --key /tmp/nixiz-vm/identity \
-  --known-hosts /tmp/nixiz-vm/known_hosts \
-  --output /tmp/nixiz-vm-acceptance
+  --key /tmp/wrtix-vm/identity \
+  --known-hosts /tmp/wrtix-vm/known_hosts \
+  --output /tmp/wrtix-vm-acceptance
 ```
 
 It requires an unenrolled VM, deliberately changes its configuration, and restores

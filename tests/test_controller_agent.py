@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
 """Compiled resources consumed by the real shell agent, without SSH simulation."""
 import json
@@ -8,7 +6,7 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src/nixiz"))
+sys.path.insert(0, str(ROOT / "src/wrtix"))
 sys.path.insert(0, str(ROOT / "tests"))
 import compiler
 import openwrt
@@ -26,7 +24,7 @@ class ControllerAgent(unittest.TestCase):
         compiled = compiler.compile_fleet(fleet, resolve_secrets=True)["fixture"]
         identity = self.target.run_engine("identity")
         compiled.update({key: identity[key] for key in ("engine_sha256", "guard_sha256")})
-        ledger_path = self.target.root / "etc/nixiz/managed.json"
+        ledger_path = self.target.root / "etc/wrtix/managed.json"
         old = json.loads(ledger_path.read_bytes()) if ledger_path.exists() else {}
         request = {"paths": openwrt.managed_paths(compiled, old),
                    "services": sorted(set(compiled["services"]) | set(old.get("services", [])))}
@@ -39,7 +37,7 @@ class ControllerAgent(unittest.TestCase):
         return compiled, transaction, request
 
     def test_minimal_registration_preserves_password_network_and_keys(self):
-        (self.target.root / "etc/nixiz/identity.json").unlink()
+        (self.target.root / "etc/wrtix/identity.json").unlink()
         before = {"etc/shadow": b"root:$6$existing:1:0:99999:7:::\n", "etc/config/network": b"# untouched\n",
                   "etc/dropbear/authorized_keys": b"ssh-ed25519 existing\n",
                   "etc/resolv.conf": b"nameserver 192.0.2.53\n"}
@@ -55,14 +53,14 @@ class ControllerAgent(unittest.TestCase):
         self.assertEqual(openwrt.changed_files(compiled, actual, actual["ledger"]), [])
 
     def test_first_enrollment_rollback_restores_unregistered_baseline(self):
-        identity = self.target.root / "etc/nixiz/identity.json"
+        identity = self.target.root / "etc/wrtix/identity.json"
         identity.unlink()
         self.target.put("etc/example", b"original")
         _, tx, _ = self.deploy({"files": {"/etc/example": {"text": "replacement"}}}, initialize=True)
         self.target.run_engine("rollback", tx["token"])
         self.target.restored()
         self.assertFalse(identity.exists())
-        self.assertFalse((self.target.root / "etc/nixiz/managed.json").exists())
+        self.assertFalse((self.target.root / "etc/wrtix/managed.json").exists())
         self.assertEqual((self.target.root / "etc/example").read_bytes(), b"original")
         self.assertEqual(self.target.run_engine("identity")["identity"]["device_id"], "")
 
@@ -80,11 +78,11 @@ class ControllerAgent(unittest.TestCase):
         compiled, tx, _ = self.deploy({})
         self.target.run_engine("confirm", tx["token"])
         self.assertEqual((self.target.root / "etc/dropbear/authorized_keys").read_bytes(), b"ssh-ed25519 managed\n")
-        ledger = json.loads((self.target.root / "etc/nixiz/managed.json").read_bytes())
+        ledger = json.loads((self.target.root / "etc/wrtix/managed.json").read_bytes())
         self.assertNotIn("etc/dropbear/authorized_keys", ledger["files"])
 
     def test_required_check_blocks_confirmation_and_rollback_remains_available(self):
-        executable = "/usr/libexec/nixiz-managed/reject"
+        executable = "/usr/libexec/wrtix-managed/reject"
         node = {"files": {executable: {"text": "#!/bin/sh\nexit 1\n", "mode": "0700"}},
                 "checks": {"reject": {"phase": "preconfirm", "executable": executable, "input": {"private": "hidden"}}}}
         compiled, tx, _ = self.deploy(node)

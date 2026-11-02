@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# APK package scripts cannot veto removal; its pre-commit hook can.
+case "${1:-}" in
+ pre-commit) exec /usr/libexec/wrtix/package-lifecycle prepare-commit;;
+ post-commit) exec /usr/libexec/wrtix/package-lifecycle finish-commit;;
+ *) exit 1;;
+esac

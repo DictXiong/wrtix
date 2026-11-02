@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Real shell transaction regression tests in isolated synthetic file trees."""
 import hashlib, io, json, os, signal, shutil, shlex, stat, subprocess, tempfile, time, tarfile, unittest, uuid
 from pathlib import Path
@@ -11,19 +9,19 @@ HASH = "$6$fixture$" + "a" * 86
 
 class TargetTransaction(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="nixiz-target-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="wrtix-target-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.engine_env = dict(os.environ)
-        for path in ("tmp", "root", "etc/config", "etc/init.d", "etc/rc.d", "proc/sys/kernel/random", "run/openwrt-test-services", "usr/share/nixiz", "etc/nixiz"):
+        for path in ("tmp", "root", "etc/config", "etc/init.d", "etc/rc.d", "proc/sys/kernel/random", "run/openwrt-test-services", "usr/share/wrtix", "etc/wrtix"):
             (self.root / path).mkdir(parents=True, exist_ok=True)
         self.put(".openwrt-target-test-root", b"synthetic test root\n")
         self.put("proc/sys/kernel/random/boot_id", b"00000000-0000-4000-8000-000000000001\n")
         self.put("proc/uptime", b"100.00 0.00\n")
-        self.put("etc/init.d/nixiz-agent", GUARD_SOURCE.read_bytes(), 0o755)
-        self.put("usr/share/nixiz/contract.json", (ROOT / "agent/contract.json").read_bytes())
+        self.put("etc/init.d/wrtix-agent", GUARD_SOURCE.read_bytes(), 0o755)
+        self.put("usr/share/wrtix/contract.json", (ROOT / "agent/contract.json").read_bytes())
         self.identity = {"schema_version": 1, "device_id": "fixture"}
-        self.put("etc/nixiz/identity.json", json.dumps(self.identity).encode())
+        self.put("etc/wrtix/identity.json", json.dumps(self.identity).encode())
         self.addCleanup(self.stop_workers)
         self.native_uci_fixture()
 
@@ -95,10 +93,10 @@ esac
         return path
 
     def owned_service_script(self, enabled, running):
-        name = "nixiz-managed-fixture"
+        name = "wrtix-managed-fixture"
         script = self.service(name, enabled=enabled, running=running)
-        self.put("etc/nixiz/managed.json", json.dumps({"schema_version": 1,
-                 "kind": "nixiz-owned-resources", "device_id": "fixture",
+        self.put("etc/wrtix/managed.json", json.dumps({"schema_version": 1,
+                 "kind": "wrtix-owned-resources", "device_id": "fixture",
                  "files": ["etc/init.d/" + name], "services": [name]}).encode())
         return name, script
 
@@ -106,7 +104,7 @@ esac
         return self.run_engine("check", data=json.dumps({"paths": list(paths), "services": list(services)}).encode())
 
     def bundle(self, files, services=None, baseline=None, extra=None, symlink=False, managed_services=None, initialize=False, resolver_target=None):
-        files = {"etc/nixiz/identity.json": (json.dumps(self.identity).encode(), "600"), **files}
+        files = {"etc/wrtix/identity.json": (json.dumps(self.identity).encode(), "600"), **files}
         services = services or {}
         baseline = baseline or self.check(files, services)
         token = uuid.uuid4().hex
@@ -121,7 +119,7 @@ esac
                 entries.append({"path": path, "delete": False, "payload": member,
                                 "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "mode": mode})
                 payloads[member] = data
-        manifest = {"schema_version": 1, "kind": "nixiz-transaction", "token": token,
+        manifest = {"schema_version": 1, "kind": "wrtix-transaction", "token": token,
                     "boot_id": baseline["boot_id"], "engine_sha256": hashlib.sha256(ENGINE.read_bytes()).hexdigest(),
                     "guard_sha256": hashlib.sha256(GUARD_SOURCE.read_bytes()).hexdigest(),
                     "device_id": "fixture",
@@ -204,7 +202,7 @@ esac
 
     def restored(self):
         """Fulfil an explicit rollback boot request before expecting completion."""
-        request = self.root / "etc/nixiz/transactions/state/reboot-request"
+        request = self.root / "etc/wrtix/transactions/state/reboot-request"
         def finished(status):
             if request.exists():
                 reason, requested_boot = request.read_text().split()
@@ -216,7 +214,7 @@ esac
         return self.wait(finished)
 
     def stop_workers(self):
-        state = self.root / "etc/nixiz/transactions/state"
+        state = self.root / "etc/wrtix/transactions/state"
         for name in ("reload.child", "reload.pid", "watch.pid"):
             path = state / name
             if not path.exists():
@@ -304,7 +302,7 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.assertTrue(result["services"]["fixture"]["enabled"])
         self.assertTrue(result["services"]["fixture"]["running"])
         self.assertEqual(result["services"]["fixture"]["links"][0]["name"], "S37fixture")
-        self.assertFalse((self.root / "etc/nixiz/transactions").exists())
+        self.assertFalse((self.root / "etc/wrtix/transactions").exists())
 
     def test_invalid_service_link_cannot_be_hidden_by_json_aggregation(self):
         self.service()
@@ -354,8 +352,8 @@ except (ValueError,KeyError,OSError):sys.exit(3)
 
     def test_service_only_deploy_and_removed_service_ownership(self):
         self.service(enabled=True, running=True)
-        self.put("etc/nixiz/managed.json", json.dumps({"schema_version": 1,
-                 "kind": "nixiz-owned-resources", "device_id": "fixture",
+        self.put("etc/wrtix/managed.json", json.dumps({"schema_version": 1,
+                 "kind": "wrtix-owned-resources", "device_id": "fixture",
                  "files": [], "services": ["fixture"]}).encode())
         token, data, _ = self.bundle({}, {"fixture": {"enable": False, "running": False, "action": "restart"}},
                                      managed_services=[])
@@ -363,14 +361,14 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.run_engine("apply", token)
         self.ready()
         self.run_engine("confirm", token)
-        ledger = json.loads((self.root / "etc/nixiz/managed.json").read_text())
-        self.assertEqual(ledger["files"], ["etc/nixiz/identity.json"])
+        ledger = json.loads((self.root / "etc/wrtix/managed.json").read_text())
+        self.assertEqual(ledger["files"], ["etc/wrtix/identity.json"])
         self.assertEqual(ledger["services"], [])
         self.assertEqual((self.root / "run/openwrt-test-services/fixture.running").read_text().strip(), "false")
 
     def test_new_managed_service_can_be_staged_but_missing_service_cannot(self):
-        path = "etc/init.d/nixiz-managed-new"
-        services = {"nixiz-managed-new": {"enable": True, "running": None, "action": "restart"}}
+        path = "etc/init.d/wrtix-managed-new"
+        services = {"wrtix-managed-new": {"enable": True, "running": None, "action": "restart"}}
         _, missing, _ = self.bundle({}, services)
         self.assertIn(b"missing_required_service", self.run_engine("stage", data=missing, ok=False).stderr)
         token, data, _ = self.bundle({path: (b"#!/bin/sh\nexit 0\n", "755")}, services)
@@ -404,7 +402,7 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         failed = self.run_engine("apply", token, ok=False)
         self.assertIn(b"init_service_must_be_stopped", failed.stderr)
         self.assertTrue(script.exists())
-        self.assertFalse((self.root / "etc/nixiz/transactions/state/applying").exists())
+        self.assertFalse((self.root / "etc/wrtix/transactions/state/applying").exists())
         self.run_engine("rollback", token)
 
     def test_confirmed_stop_then_init_deletion_leaves_no_daemon_or_links(self):
@@ -422,8 +420,8 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.assertFalse(script.exists())
         self.assertEqual(list((self.root / "etc/rc.d").iterdir()), [])
         self.assertEqual((self.root / ("run/openwrt-test-services/" + name + ".running")).read_text().strip(), "false")
-        ledger = json.loads((self.root / "etc/nixiz/managed.json").read_text())
-        self.assertEqual(ledger["files"], ["etc/nixiz/identity.json"])
+        ledger = json.loads((self.root / "etc/wrtix/managed.json").read_text())
+        self.assertEqual(ledger["files"], ["etc/wrtix/identity.json"])
         self.assertEqual(ledger["services"], [])
 
     def test_missing_disabled_init_does_not_hide_running_daemon_at_confirmation(self):
@@ -455,8 +453,8 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"after\n")
         self.assertEqual(stat.S_IMODE((self.root / "etc/config/example").stat().st_mode), 0o644)
         self.assertEqual(stat.S_IMODE((self.root / "etc/fixture-secret").stat().st_mode), 0o600)
-        ledger = json.loads((self.root / "etc/nixiz/managed.json").read_text())
-        self.assertEqual(set(ledger["files"]), {"etc/config/example", "etc/fixture-secret", "etc/nixiz/identity.json"})
+        ledger = json.loads((self.root / "etc/wrtix/managed.json").read_text())
+        self.assertEqual(set(ledger["files"]), {"etc/config/example", "etc/fixture-secret", "etc/wrtix/identity.json"})
 
     def test_reload_only_daemon_is_started_when_required_running(self):
         self.service(enabled=False, running=False)
@@ -479,7 +477,7 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         status = self.wait(lambda result: result["state"] == "rolled-back" and result["reload_complete"])
         self.run_engine("confirm", token, ok=False)
         self.assertLess(status["now"], status["deadline"])
-        self.assertEqual((self.root / "etc/nixiz/transactions/state/rolled-back").read_text().strip(), "activation_failed")
+        self.assertEqual((self.root / "etc/wrtix/transactions/state/rolled-back").read_text().strip(), "activation_failed")
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"original")
         self.assertEqual((self.root / "run/openwrt-test-services/fixture.running").read_text().strip(), "false")
         self.assertEqual(list((self.root / "etc/rc.d").iterdir()), [])
@@ -519,10 +517,10 @@ case "$action" in""")
         self.assertEqual(result["activation_error"], expected)
         self.assertEqual(result["restore_error"], expected_restore)
         self.assertNotIn("private-child-stderr-sentinel", json.dumps(result))
-        state = self.root / "etc/nixiz/transactions/state"
+        state = self.root / "etc/wrtix/transactions/state"
         self.assertNotIn(b"private-child-stderr-sentinel", b"".join(file.read_bytes() for file in state.glob("*error*")))
         # Corrupt/unrecognized metadata is never presented as a trusted diagnostic.
-        self.put("etc/nixiz/transactions/state/activate-error.json", json.dumps(
+        self.put("etc/wrtix/transactions/state/activate-error.json", json.dumps(
             {**expected, "service": "private value with spaces"}).encode())
         self.assertIsNone(self.run_engine("status")["activation_error"])
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"original")
@@ -571,15 +569,15 @@ case "$action" in""")
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"before\n")
         self.assertEqual(stat.S_IMODE((self.root / "etc/config/example").stat().st_mode), 0o640)
         self.assertFalse((self.root / "etc/fixture-new").exists())
-        self.assertFalse((self.root / "etc/nixiz/managed.json").exists())
+        self.assertFalse((self.root / "etc/wrtix/managed.json").exists())
         links = sorted(p.name for p in (self.root / "etc/rc.d").iterdir())
         self.assertEqual(links, ["S37fixture"])
         self.assertEqual((self.root / "run/openwrt-test-services/fixture.running").read_text().strip(), "true")
 
     def test_owned_deletion_is_reversed_by_rollback(self):
         self.put("etc/old-plugin", b"old contents", 0o640)
-        self.put("etc/nixiz/managed.json", json.dumps({"schema_version": 1,
-                 "kind": "nixiz-owned-resources", "device_id": "fixture",
+        self.put("etc/wrtix/managed.json", json.dumps({"schema_version": 1,
+                 "kind": "wrtix-owned-resources", "device_id": "fixture",
                  "files": ["etc/old-plugin"], "services": []}).encode())
         token, _ = self.apply({"etc/old-plugin": None})
         self.ready()
@@ -614,7 +612,7 @@ case "$action" in""")
         token, _ = self.apply({"etc/config/example": (b"accepted", "600")})
         self.ready()
         self.run_engine("confirm", token)
-        journal = self.root / "etc/nixiz/transactions/state/manifest.json"
+        journal = self.root / "etc/wrtix/transactions/state/manifest.json"
         original = journal.read_bytes()
         for value, reason in ((None, b"invalid_manifest"), ("malformed", b"invalid_manifest"),
                               ("0" * 64, b"engine_version_changed")):
@@ -636,7 +634,7 @@ case "$action" in""")
         token, _ = self.apply({"etc/config/example": (b"accepted", "600")})
         self.ready()
         self.run_engine("confirm", token)
-        journal = self.root / "etc/nixiz/transactions/state/manifest.json"
+        journal = self.root / "etc/wrtix/transactions/state/manifest.json"
         original = journal.read_bytes()
         for value, reason in ((None, b"invalid_manifest"), ("malformed", b"invalid_manifest"),
                               ("0" * 64, b"guard_version_changed"), ("installed_drift", b"guard_version_changed")):
@@ -645,7 +643,7 @@ case "$action" in""")
                 if value is None:
                     del manifest["guard_sha256"]
                 elif value == "installed_drift":
-                    self.put("etc/init.d/nixiz-agent", b"#!/bin/sh\nexit 0\n", 0o755)
+                    self.put("etc/init.d/wrtix-agent", b"#!/bin/sh\nexit 0\n", 0o755)
                 else:
                     manifest["guard_sha256"] = value
                 _, data, _ = self.bundle({"etc/config/example": (b"candidate", "600")},
@@ -660,18 +658,18 @@ case "$action" in""")
         token, _ = self.apply({"etc/config/example": (b"accepted", "600")})
         self.ready()
         self.run_engine("confirm", token)
-        journal = self.root / "etc/nixiz/transactions/state/manifest.json"
+        journal = self.root / "etc/wrtix/transactions/state/manifest.json"
         original = journal.read_bytes()
         _, _, manifest = self.bundle({"etc/config/example": (b"candidate", "600")})
-        manifest["services"] = {"nixiz-agent": {"enable": False, "running": False, "action": "reload"}}
-        manifest["managed_services"] = ["nixiz-agent"]
+        manifest["services"] = {"wrtix-agent": {"enable": False, "running": False, "action": "reload"}}
+        manifest["managed_services"] = ["wrtix-agent"]
         _, data, _ = self.bundle({"etc/config/example": (b"candidate", "600")},
                                  extra={"manifest.json": json.dumps(manifest).encode()})
         failed = self.run_engine("stage", data=data, ok=False)
         self.assertIn(b"invalid_manifest", failed.stderr)
         self.assertEqual(journal.read_bytes(), original)
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"accepted")
-        self.assertEqual((self.root / "etc/init.d/nixiz-agent").read_bytes(), GUARD_SOURCE.read_bytes())
+        self.assertEqual((self.root / "etc/init.d/wrtix-agent").read_bytes(), GUARD_SOURCE.read_bytes())
 
     def test_stage_cas_rejects_file_drift(self):
         self.put("etc/config/example", b"before")
@@ -693,7 +691,7 @@ case "$action" in""")
 
     def test_paths_parent_symlinks_and_reserved_destinations_rejected(self):
         for path in ("etc/../shadow", "etc//shadow", "/etc/config/test", "etc/shadow",
-                     "etc/ssh/ssh_host_ed25519_key", "etc/init.d/nixiz-agent"):
+                     "etc/ssh/ssh_host_ed25519_key", "etc/init.d/wrtix-agent"):
             with self.subTest(path=path):
                 self.run_engine("check", data=json.dumps({"paths": [path], "services": []}).encode(), ok=False)
         outside = self.root / "outside"
@@ -720,7 +718,7 @@ case "$action" in""")
         self.put("etc/config/example", b"before")
         token, data, _ = self.bundle({"etc/config/example": (b"after", "600")})
         self.run_engine("stage", data=data)
-        self.put("etc/nixiz/transactions/state/candidate/0", b"corrupt")
+        self.put("etc/wrtix/transactions/state/candidate/0", b"corrupt")
         failed = self.run_engine("apply", token, ok=False)
         self.assertIn(b"payload_corrupt", failed.stderr)
         self.run_engine("rollback", token)
@@ -737,7 +735,7 @@ case "$action" in""")
         status = self.wait(lambda result: result["state"] == "rolled-back" and result["reload_complete"])
         self.assertLess(status["now"], status["deadline"])
         self.assertEqual((self.root / "proc/uptime").read_bytes(), b"100.00 0.00\n")
-        self.assertEqual((self.root / "etc/nixiz/transactions/state/rolled-back").read_text().strip(), "activation_failed")
+        self.assertEqual((self.root / "etc/wrtix/transactions/state/rolled-back").read_text().strip(), "activation_failed")
         self.assertEqual((self.root / "etc/config/example").read_bytes(), b"accepted\n")
         self.assertEqual(stat.S_IMODE((self.root / "etc/config/example").stat().st_mode), 0o640)
         self.assertEqual((self.root / "run/openwrt-test-services/fixture.running").read_text().strip(), "true")
@@ -804,7 +802,7 @@ case "$action" in""")
     def test_unrelated_plugin_change_does_not_reload_wifi_or_running_service(self):
         self.service(enabled=True, running=True)
         self.put("etc/shadow", ("root:" + HASH + ":1:0:99999:7:::\n").encode())
-        self.put("etc/nixiz/root-password-hash", (HASH + "\n").encode())
+        self.put("etc/wrtix/root-password-hash", (HASH + "\n").encode())
         (self.root / "etc/resolv.conf").symlink_to("/tmp/resolv.conf.d/resolv.conf.auto")
         self.put("sbin/wifi", (f"#!/bin/sh\necho called >> '{self.root}/run/wifi-actions'\n").encode(), 0o755)
         shadow_inode = (self.root / "etc/shadow").stat().st_ino
@@ -856,7 +854,7 @@ sys.exit(result.returncode)
         self.put("etc/config/example", b"before")
         token, _ = self.apply({"etc/config/example": (b"after", "600"), "etc/fixture-new": (b"new", "600")})
         self.ready()
-        state = self.root / "etc/nixiz/transactions/state"
+        state = self.root / "etc/wrtix/transactions/state"
         rows = json.loads((state / "before.json").read_text())
         row = next(x for x in rows if x["path"] == "etc/config/example")
         (state / "backup" / str(row["index"])).write_bytes(b"corrupt")
@@ -870,7 +868,7 @@ sys.exit(result.returncode)
         self.put("run/fixture.slow", b"slow")
         token, _ = self.apply({"etc/config/example": (b"after", "600")},
                               {"fixture": {"enable": True, "running": True, "action": "reload"}})
-        state = self.root / "etc/nixiz/transactions/state"
+        state = self.root / "etc/wrtix/transactions/state"
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             if (state / "reload.child").exists() and (state / "reload.pid").exists():
@@ -889,7 +887,7 @@ sys.exit(result.returncode)
 
 
     def test_plain_enrollment_preserves_existing_network_and_credentials(self):
-        (self.root / "etc/nixiz/identity.json").unlink()
+        (self.root / "etc/wrtix/identity.json").unlink()
         self.put("etc/shadow", b"root:EXISTING:0:0:99999:7:::\n")
         self.put("etc/config/network", b"config interface 'uplink'\n option proto 'dhcp'\n")
         self.put("etc/dropbear/authorized_keys", b"existing-key\n")
@@ -904,46 +902,46 @@ sys.exit(result.returncode)
         self.assertIn(b"uplink", (self.root / "etc/config/network").read_bytes())
 
     def test_enrollment_expiry_restores_unregistered_identity(self):
-        (self.root / "etc/nixiz/identity.json").unlink()
+        (self.root / "etc/wrtix/identity.json").unlink()
         token, data, _ = self.bundle({"etc/new-setting": (b"candidate", "600")}, initialize=True)
         self.run_engine("stage", data=data)
         self.run_engine("apply", token)
         self.ready()
         self.put("proc/uptime", b"500.00 0.00\n")
         self.restored()
-        self.assertFalse((self.root / "etc/nixiz/identity.json").exists())
+        self.assertFalse((self.root / "etc/wrtix/identity.json").exists())
         self.assertFalse((self.root / "etc/new-setting").exists())
         self.assertEqual(self.run_engine("identity")["identity"]["device_id"], "")
 
     def test_unregistered_target_requires_explicit_initialization(self):
-        (self.root / "etc/nixiz/identity.json").unlink()
+        (self.root / "etc/wrtix/identity.json").unlink()
         _, data, _ = self.bundle({})
         failed = self.run_engine("stage", data=data, ok=False)
         self.assertIn(b"baseline_changed", failed.stderr)
-        self.assertFalse((self.root / "etc/nixiz/transactions/state").exists())
+        self.assertFalse((self.root / "etc/wrtix/transactions/state").exists())
 
     def test_package_operation_blocks_stage(self):
         _, data, _ = self.bundle({})
-        self.put("etc/nixiz/package-operation", b"install\n")
+        self.put("etc/wrtix/package-operation", b"install\n")
         result = self.run_engine("stage", data=data, ok=False)
         self.assertIn(b"package_operation_active", result.stderr)
 
     def test_optional_password_rolls_back_exact_shadow(self):
         old = b"root:EXISTING:0:0:99999:7:::\nservice:!:0:0:99999:7:::\n"
         self.put("etc/shadow", old)
-        token, _ = self.apply({"etc/nixiz/root-password-hash": ((HASH + "\n").encode(), "600")})
+        token, _ = self.apply({"etc/wrtix/root-password-hash": ((HASH + "\n").encode(), "600")})
         self.ready()
         self.assertIn(HASH.encode(), (self.root / "etc/shadow").read_bytes())
         self.run_engine("rollback", token)
         self.restored()
         self.assertEqual((self.root / "etc/shadow").read_bytes(), old)
-        self.assertFalse((self.root / "etc/nixiz/root-password-hash").exists())
+        self.assertFalse((self.root / "etc/wrtix/root-password-hash").exists())
 
     def with_check(self, phase, script=b"#!/bin/sh\nexit 0\n", digest=None):
-        files = {"usr/libexec/nixiz-managed/check-example": (script, "700")}
+        files = {"usr/libexec/wrtix-managed/check-example": (script, "700")}
         token, _, manifest = self.bundle(files)
         manifest["checks"] = [{"name": "example", "phase": phase,
-            "executable": "/usr/libexec/nixiz-managed/check-example",
+            "executable": "/usr/libexec/wrtix-managed/check-example",
             "sha256": digest or hashlib.sha256(script).hexdigest(), "timeoutSeconds": 2,
             "input": {"private": "do-not-log-this"}}]
         entries = {"manifest.json": json.dumps(manifest).encode(),
@@ -960,7 +958,7 @@ sys.exit(result.returncode)
         failed = self.run_engine("stage", data=data, ok=False)
         self.assertIn(b"preflight_check_failed", failed.stderr)
         self.assertNotIn(b"do-not-log-this", failed.stderr + failed.stdout)
-        self.assertFalse((self.root / "usr/libexec/nixiz-managed/check-example").exists())
+        self.assertFalse((self.root / "usr/libexec/wrtix-managed/check-example").exists())
 
     def test_check_hash_cannot_be_bypassed(self):
         _, data, _ = self.with_check("preflight", digest="a"*64)
@@ -984,7 +982,7 @@ sys.exit(result.returncode)
         self.run_engine("confirm", token)
         request = json.dumps({"checks": manifest["checks"]}).encode()
         self.assertTrue(self.run_engine("verify", data=request)["matches"])
-        self.put("usr/libexec/nixiz-managed/check-example", b"#!/bin/sh\nexit 0\n# drift\n", 0o700)
+        self.put("usr/libexec/wrtix-managed/check-example", b"#!/bin/sh\nexit 0\n# drift\n", 0o700)
         self.run_engine("verify", data=request, ok=False)
 
     def test_network_mac_change_requires_boot_and_keeps_deadline(self):

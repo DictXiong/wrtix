@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # Plain, complete UCI resources for a simple 2.4 GHz mac80211 access point.
 {
   targetHost,

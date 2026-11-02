@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Build and apply declarative OpenWrt configuration with guarded transactions."""
 from __future__ import annotations
 

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Destructive integration acceptance for an isolated official OpenWrt VM.
 
-Requires a freshly installed nixiz-agent and two SSH forwards, at the same
+Requires a freshly installed wrtix-agent and two SSH forwards, at the same
 port, to guest addresses 10.0.2.15 and 10.0.2.16. Never point this at a router.
 All receipts, credentials supplied by the caller, and logs remain outside Git.
 """
@@ -24,7 +22,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'src/nixiz'))
+sys.path.insert(0, str(ROOT / 'src/wrtix'))
 import compiler
 
 
@@ -57,7 +55,7 @@ class Acceptance:
         return {'target_host': self.host, 'ssh_port': self.args.port, **extra}
 
     def command(self, action, node=None, *, name, options=(), expected=0, asynchronous=False, address_input=None):
-        argv = [sys.executable, str(ROOT / 'src/nixiz/openwrt.py')]
+        argv = [sys.executable, str(ROOT / 'src/wrtix/openwrt.py')]
         if node is not None:
             manifest = {'schema_version': 1, 'kind': 'openwrt-fleet', 'devices': {'vm': node}}
             path = self.save(name + '.manifest.json', manifest)
@@ -123,19 +121,19 @@ class Acceptance:
         print('PASS ' + name, flush=True)
 
     def status(self):
-        return json.loads(self.remote('/usr/libexec/nixiz/agent status').stdout)
+        return json.loads(self.remote('/usr/libexec/wrtix/agent status').stdout)
 
     def wait_state(self, state, timeout=100):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            result = self.remote('/usr/libexec/nixiz/agent status', check=False)
+            result = self.remote('/usr/libexec/wrtix/agent status', check=False)
             if result.returncode == 0 and json.loads(result.stdout).get('state') == state:
                 return json.loads(result.stdout)
             time.sleep(2)
         raise RuntimeError('VM did not reach state ' + state)
 
     def run(self):
-        identity = json.loads(self.remote('/usr/libexec/nixiz/agent identity').stdout)
+        identity = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
         if identity['identity']['device_id']:
             raise RuntimeError('acceptance requires a freshly unenrolled isolated VM')
         release = self.remote('. /etc/openwrt_release; printf "%s" "$DISTRIB_RELEASE"').stdout
@@ -144,13 +142,13 @@ class Acceptance:
         before = self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout
         original_network = self.remote('cat /etc/config/network').stdout
         self.save('original-network', original_network)
-        first = self.node(files={'/etc/nixiz-first-probe': {'text': 'candidate', 'mode': '0600'}})
+        first = self.node(files={'/etc/wrtix-first-probe': {'text': 'candidate', 'mode': '0600'}})
         self.command('deploy', first, name='first-unconfirmed', options=(
             '--initialize', '--target-host', self.host, '--ttl', '60',
             '--receipt', self.receipt('first-unconfirmed')))
         self.wait_state('rolled-back', 90)
-        assert json.loads(self.remote('/usr/libexec/nixiz/agent identity').stdout)['identity']['device_id'] == ''
-        assert self.remote('test ! -e /etc/nixiz-first-probe', check=False).returncode == 0
+        assert json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)['identity']['device_id'] == ''
+        assert self.remote('test ! -e /etc/wrtix-first-probe', check=False).returncode == 0
         assert self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout == before
         self.passed('failed first takeover restores unregistered identity and original network/authentication')
         minimal = self.node()
@@ -162,11 +160,11 @@ class Acceptance:
         assert self.command('deploy', minimal, name='noop')['state'] == 'noop'
         self.passed('identical deployment is noop')
 
-        changed = self.node(files={'/etc/nixiz-vm-probe': {'text': 'candidate\n', 'mode': '0600'}})
+        changed = self.node(files={'/etc/wrtix-vm-probe': {'text': 'candidate\n', 'mode': '0600'}})
         self.command('deploy', changed, name='timeout', options=('--receipt', self.receipt('timeout'), '--ttl', '60'))
-        assert self.remote('cat /etc/nixiz-vm-probe').stdout == b'candidate\n'
+        assert self.remote('cat /etc/wrtix-vm-probe').stdout == b'candidate\n'
         self.wait_state('rolled-back', 90)
-        assert self.remote('test ! -e /etc/nixiz-vm-probe', check=False).returncode == 0
+        assert self.remote('test ! -e /etc/wrtix-vm-probe', check=False).returncode == 0
         self.command('status', name='timeout-receipt', options=('--receipt', self.receipt('timeout')))
         self.passed('unconfirmed deployment expires and receipt recovers rolled-back state')
 
@@ -174,14 +172,14 @@ class Acceptance:
         assert self.command('confirm', name='recover-confirm', options=('--receipt', self.receipt('recover')))['state'] == 'confirmed'
         self.passed('receipt confirms without a manifest or original controller process')
 
-        reject = self.node(files={'/usr/libexec/nixiz-managed/reject': {'text': '#!/bin/sh\ncat >/dev/null\nexit 1\n', 'mode': '0700'}},
-            checks={'reject': {'phase': 'preconfirm', 'executable': '/usr/libexec/nixiz-managed/reject',
+        reject = self.node(files={'/usr/libexec/wrtix-managed/reject': {'text': '#!/bin/sh\ncat >/dev/null\nexit 1\n', 'mode': '0700'}},
+            checks={'reject': {'phase': 'preconfirm', 'executable': '/usr/libexec/wrtix-managed/reject',
                                'input': {'secret': 'synthetic-private-value'}}})
         self.command('deploy', reject, name='required-check', expected=1, options=(
             '--receipt', self.receipt('required-check'), '--auto-confirm', '--ttl', '60'))
         assert self.status()['state'] != 'confirmed'
         self.wait_state('rolled-back', 90)
-        assert self.remote('cat /etc/nixiz-vm-probe').stdout == b'candidate\n'
+        assert self.remote('cat /etc/wrtix-vm-probe').stdout == b'candidate\n'
         self.passed('required preconfirm failure cannot cancel deadline or bypass rollback')
 
         shadow_before = self.remote('sha256sum /etc/shadow').stdout
@@ -196,8 +194,8 @@ class Acceptance:
 
         # Start an apply whose service restart remains active, then kill only the
         # controller process. The packaged target guard owns recovery throughout.
-        slow = self.node(files={'/etc/init.d/nixiz-managed-vm-probe': {'text': '#!/bin/sh /etc/rc.common\nSTART=99\nstart() { sleep 12; }\nstop() { :; }\n', 'mode': '0755'}},
-                         services={'nixiz-managed-vm-probe': {'enable': True, 'action': 'restart'}})
+        slow = self.node(files={'/etc/init.d/wrtix-managed-vm-probe': {'text': '#!/bin/sh /etc/rc.common\nSTART=99\nstart() { sleep 12; }\nstop() { :; }\n', 'mode': '0755'}},
+                         services={'wrtix-managed-vm-probe': {'enable': True, 'action': 'restart'}})
         process = self.command('deploy', slow, name='interrupted', asynchronous=True,
                                options=('--receipt', self.receipt('interrupted'), '--ttl', '180'))
         try:
@@ -237,10 +235,10 @@ class Acceptance:
         changed_mac = copy.deepcopy(restore)
         changed_mac['target_host'] = self.host
         changed_mac['uci']['network']['lan']['options']['macaddr'] = '02:00:00:00:00:27'
-        before_boot = json.loads(self.remote('/usr/libexec/nixiz/agent identity').stdout)['boot_id']
+        before_boot = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)['boot_id']
         self.command('deploy', changed_mac, name='planned-reboot', options=(
             '--receipt', self.receipt('planned-reboot'), '--ttl', '300', '--auto-confirm'))
-        after = json.loads(self.remote('/usr/libexec/nixiz/agent identity').stdout)
+        after = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
         assert after['boot_id'] != before_boot
         assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == b'02:00:00:00:00:27'
         self.passed('MAC change requires authenticated reboot and resumes original transaction')

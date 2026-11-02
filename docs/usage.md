@@ -1,20 +1,16 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # Usage
 
 ## Configure
 
-Install a matching `nixiz-agent` package on the OpenWrt target through the feed.
+Install a matching `wrtix-agent` package on the OpenWrt target through the feed.
 Keep your existing SSH credentials and host-key verification. Installing the
 package does not enroll the device or change its networking.
 
-For NixOS, import `nixiz.nixosModules.default` and enable `services.openwrt`.
+For NixOS, import `wrtix.nixosModules.default` and enable `services.openwrt`.
 For ordinary Linux with Nix, expose a standalone output in your flake:
 
 ```nix
-openwrtConfigurations.site = nixiz.lib.openwrtConfiguration {
+openwrtConfigurations.site = wrtix.lib.openwrtConfiguration {
   pkgs = nixpkgs.legacyPackages.x86_64-linux;
   modules = [
     {
@@ -33,7 +29,7 @@ openwrtConfigurations.site = nixiz.lib.openwrtConfiguration {
 };
 ```
 
-Use `github:DictXiong/nixiz` as the input and retain `flake.lock` to pin its
+Use `github:DictXiong/wrtix` as the input and retain `flake.lock` to pin its
 revision. An explicit local `path:` input is suitable for development. The package is available for
 `x86_64-linux` and `aarch64-linux`; the target agent is shell code packaged by an
 OpenWrt feed.

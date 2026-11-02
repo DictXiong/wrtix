@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Deploy declarative OpenWrt configuration; decrypt secrets only at execution."""
 from __future__ import annotations
 
@@ -33,9 +31,9 @@ from receipts import ReceiptError, allocate_receipt, clean_receipts, default_dir
 
 HERE = Path(__file__).resolve().parent
 REBOOT_INPUT_SECONDS = 150
-REMOTE = "/usr/libexec/nixiz/agent"
-GUARD = "/etc/init.d/nixiz-agent"
-LEDGER = "etc/nixiz/managed.json"
+REMOTE = "/usr/libexec/wrtix/agent"
+GUARD = "/etc/init.d/wrtix-agent"
+LEDGER = "etc/wrtix/managed.json"
 
 
 class DeployError(RuntimeError):
@@ -395,14 +393,14 @@ class Transport:
         output = self._run_stage("agent identity preflight", shlex.join(["sh", REMOTE, "identity"]))
         try:
             result = json.loads(output)
-            if (not isinstance(result, dict) or result.get("profile") != "nixiz-v2"
+            if (not isinstance(result, dict) or result.get("profile") != "wrtix-v2"
                     or not isinstance(result.get("identity"), dict)
                     or any(not isinstance(result.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", result[key])
                            for key in ("contract_sha256", "engine_sha256", "guard_sha256"))):
                 raise ValueError()
             return result
         except (ValueError, UnicodeError):
-            raise DeployError("target nixiz contract is unavailable or incompatible") from None
+            raise DeployError("target wrtix contract is unavailable or incompatible") from None
 
     def agent_preflight(self, allow_initialize=False):
         result = self.agent_contract()
@@ -476,7 +474,7 @@ def pending_bundle(compiled, baseline, node, ttl, old, initialize=False):
         desired["reload"] = name in service_changes or any(
             path in changed for path in ["etc/config/" + key for key in triggers.get("uci", [])]
             + [path.lstrip("/") for path in triggers.get("files", [])])
-    manifest = {"schema_version": 1, "kind": "nixiz-transaction", "token": token,
+    manifest = {"schema_version": 1, "kind": "wrtix-transaction", "token": token,
                 "boot_id": baseline["boot_id"], "device_id": node,
                 "board_names": compiled["identity"].get("board_names", []),
                 "contract_sha256": compiled["contract_sha256"], "resolver_target": compiled.get("resolver_target"), "ttl_seconds": ttl,
@@ -1038,7 +1036,7 @@ def main(argv=None):
             receipt["post_switch_host"] = args.post_switch_host
         if args.post_switch_port is not None:
             receipt["post_switch_port"] = args.post_switch_port
-        if receipt.get("schema_version") != 1 or receipt.get("protocol") != "nixiz-v2" or not isinstance(receipt.get("device_id"), str):
+        if receipt.get("schema_version") != 1 or receipt.get("protocol") != "wrtix-v2" or not isinstance(receipt.get("device_id"), str):
             raise DeployError("invalid transaction receipt")
         if args.device and args.device != receipt["device_id"]:
             raise DeployError("receipt belongs to another device")
@@ -1190,7 +1188,7 @@ def main(argv=None):
             else:
                 with device_progress.stage("Checking deployment runtime"):
                     if not transport.installed():
-                        raise DeployError("target has no nixiz agent; install the package first")
+                        raise DeployError("target has no wrtix agent; install the package first")
             with device_progress.stage("Reading current configuration"):
                 old = transport.ledger()
                 if old and (initialize or old.get("device_id") != node):
@@ -1238,7 +1236,7 @@ def main(argv=None):
                 if not 60 <= ttl <= 7200:
                     raise DeployError("rollback timeout outside supported range")
                 transaction, data = pending_bundle(compiled, baseline, node, ttl, old, initialize=initialize)
-                receipt = {"schema_version": 1, "protocol": "nixiz-v2", "device_id": node, "host": transport.host,
+                receipt = {"schema_version": 1, "protocol": "wrtix-v2", "device_id": node, "host": transport.host,
                            "port": transport.port, "initial_port": transport.port, "initial_host": transport.host,
                            "user": transport.user, "token": transaction["token"], "state": "prepared",
                            "boot_id": baseline["boot_id"], "origin_boot_id": baseline["boot_id"],

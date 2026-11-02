@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
 {
   lib,
@@ -18,7 +16,7 @@ let
   python = python3.withPackages (ps: [ ps.pyyaml ]);
 in
 stdenvNoCC.mkDerivation {
-  pname = "nixiz";
+  pname = "wrtix";
   version = "0.2.0";
   src = lib.cleanSourceWith {
     src = ../.;
@@ -35,14 +33,14 @@ stdenvNoCC.mkDerivation {
   dontPatchShebangs = true;
   installPhase = ''
     runHook preInstall
-    mkdir -p "$out/lib/nixiz" "$out/bin" "$out/share/nixiz"
-    cp -r src/nixiz/. "$out/lib/nixiz/"
-    cp -r agent "$out/share/nixiz/"
+    mkdir -p "$out/lib/wrtix" "$out/bin" "$out/share/wrtix"
+    cp -r src/wrtix/. "$out/lib/wrtix/"
+    cp -r agent "$out/share/wrtix/"
     for entry in openwrt-deploy=openwrt.py openwrt-rebuild=rebuild.py; do
       makeWrapper ${python}/bin/python3 "$out/bin/''${entry%%=*}" \
-        --add-flags "$out/lib/nixiz/''${entry#*=}" \
-        --set NIXIZ_AGENT_DATA "$out/share/nixiz/agent" \
-        --prefix PYTHONPATH : "$out/lib/nixiz" \
+        --add-flags "$out/lib/wrtix/''${entry#*=}" \
+        --set WRTIX_AGENT_DATA "$out/share/wrtix/agent" \
+        --prefix PYTHONPATH : "$out/lib/wrtix" \
         --prefix PATH : ${
           lib.makeBinPath [
             python
@@ -63,7 +61,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstallCheck
     "$out/bin/openwrt-deploy" --help >/dev/null
     "$out/bin/openwrt-rebuild" --help >/dev/null
-    test -f "$out/share/nixiz/agent/contract.json"
+    test -f "$out/share/wrtix/agent/contract.json"
     runHook postInstallCheck
   '';
   passthru = {

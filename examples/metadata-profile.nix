@@ -1,7 +1,5 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
-# A user-supplied typed profile; nixiz does not know its name or semantics.
+# A user-supplied typed profile; wrtix does not know its name or semantics.
 { config, lib, ... }:
 {
   options.profiles.metadata = {

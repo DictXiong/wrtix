@@ -1,21 +1,19 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 {
-  inputs.nixiz.url = "github:DictXiong/nixiz";
+  inputs.wrtix.url = "github:DictXiong/wrtix";
 
   outputs =
-    { nixiz, ... }:
+    { wrtix, ... }:
     let
       system = "x86_64-linux"; # Use aarch64-linux on an ARM controller.
-      home = nixiz.lib.openwrtConfiguration {
-        pkgs = nixiz.inputs.nixpkgs.legacyPackages.${system};
+      home = wrtix.lib.openwrtConfiguration {
+        pkgs = wrtix.inputs.nixpkgs.legacyPackages.${system};
         modules = [
           {
             services.openwrt = {
               enable = true;
               devices.router = {
                 target_host = "root@router.example";
-                files."/etc/nixiz-example".text = "Managed by nixiz\n";
+                files."/etc/wrtix-example".text = "Managed by wrtix\n";
               };
             };
           }

@@ -1,7 +1,3 @@
-<!--
-This file was generated entirely by AI.
-It has not been reviewed line by line by a human.
--->
 # Testing and limits
 
 Run `nix flake check` for the host system. It evaluates public NixOS and

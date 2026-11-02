@@ -1,6 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Portable inherited regressions for SOPS, SSH and private receipts.
 
 Migrated from the original controller without its firmware or AP fixtures.
@@ -20,7 +18,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src/nixiz"))
+sys.path.insert(0, str(ROOT / "src/wrtix"))
 from secret_refs import SecretError, SecretResolver
 from compiler import CompileError, compile_fleet
 FIXTURE_HASH = "$6$fixture$" + "A" * 86
@@ -615,7 +613,7 @@ class TransportStdinTests(unittest.TestCase):
             fake_ssh.chmod(0o700)
             setup = (
                 "import sys; from types import SimpleNamespace; "
-                "sys.path.insert(0, " + repr(str(ROOT / "src/nixiz")) + "); "
+                "sys.path.insert(0, " + repr(str(ROOT / "src/wrtix")) + "); "
                 "from openwrt import Transport; "
                 "args=SimpleNamespace(host=None,port=None,control_socket=None,jump_host=None,known_hosts=None); "
                 "transport=Transport(args,{},"
@@ -788,7 +786,7 @@ class ReceiptStoreTests(unittest.TestCase):
 
     def test_cleanup_serializes_with_managed_receipt_updates(self):
         path = self.write_receipt(state="confirmed", days=365)
-        code = ("import json,sys; sys.path.insert(0," + repr(str(ROOT / "src/nixiz")) + "); "
+        code = ("import json,sys; sys.path.insert(0," + repr(str(ROOT / "src/wrtix")) + "); "
                 "import receipts; print('ready',flush=True); print(json.dumps(receipts.clean_receipts(older_than_days=30)))")
         with self.store.receipt_lock(path):
             child = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.DEVNULL,

@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Compile public Nix fleet descriptions to one owned OpenWrt resource plan."""
 from __future__ import annotations
 
@@ -28,18 +26,18 @@ SENTINEL_HASH = "$6$preview$" + "A" * 86
 
 
 def contract_path():
-    return Path(os.environ.get("NIXIZ_AGENT_DATA", Path(__file__).resolve().parents[2] / "agent")) / "contract.json"
+    return Path(os.environ.get("WRTIX_AGENT_DATA", Path(__file__).resolve().parents[2] / "agent")) / "contract.json"
 
 
 def load_contract():
     try:
         data = contract_path().read_bytes()
         value = json.loads(data)
-        if value.get("profile") != "nixiz-v2":
+        if value.get("profile") != "wrtix-v2":
             raise ValueError()
         return value, digest(data)
     except (OSError, ValueError):
-        raise CompileError("nixiz protocol contract is unavailable") from None
+        raise CompileError("wrtix protocol contract is unavailable") from None
 
 
 def digest(data):
@@ -53,13 +51,13 @@ def validate_path(path):
     if any(not part or part in (".", "..") for part in rel.split("/")) or not re.fullmatch(r"[A-Za-z0-9_./+-]+", rel):
         raise CompileError("unsafe managed file path")
     blocked = {"etc/shadow", "etc/passwd", "etc/group", "etc/gshadow", "etc/resolv.conf",
-               "etc/ssh", "etc/rc.d", "etc/nixiz"}
-    if (rel in blocked or rel.startswith(("etc/dropbear/dropbear_", "etc/ssh/", "etc/nixiz/", "etc/rc.d/"))
-            or rel == "etc/init.d/nixiz-agent"):
+               "etc/ssh", "etc/rc.d", "etc/wrtix"}
+    if (rel in blocked or rel.startswith(("etc/dropbear/dropbear_", "etc/ssh/", "etc/wrtix/", "etc/rc.d/"))
+            or rel == "etc/init.d/wrtix-agent"):
         raise CompileError("file destination belongs to a protected system resource")
-    if rel.startswith("etc/init.d/") and not rel.startswith("etc/init.d/nixiz-managed-"):
-        raise CompileError("custom init scripts require the nixiz-managed- namespace")
-    if not (rel.startswith("etc/") or rel.startswith("usr/libexec/nixiz-managed/")):
+    if rel.startswith("etc/init.d/") and not rel.startswith("etc/init.d/wrtix-managed-"):
+        raise CompileError("custom init scripts require the wrtix-managed- namespace")
+    if not (rel.startswith("etc/") or rel.startswith("usr/libexec/wrtix-managed/")):
         raise CompileError("managed file destination is outside supported configuration roots")
     return rel
 
@@ -283,8 +281,8 @@ def validate_checks(node, resources):
             sha256 = None
         else:
             rel = validate_path(executable)
-            if not rel.startswith("usr/libexec/nixiz-managed/") or rel not in resources["files"]:
-                raise CompileError("target check must be a supplied nixiz-managed executable")
+            if not rel.startswith("usr/libexec/wrtix-managed/") or rel not in resources["files"]:
+                raise CompileError("target check must be a supplied wrtix-managed executable")
             if resources["modes"].get(rel) not in ("700", "755"):
                 raise CompileError("target check file must be executable")
             sha256 = digest(resources["files"][rel])
@@ -449,7 +447,7 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
     else:
         nodes = placeholder(effective)
     contract, contract_hash = load_contract()
-    reserved = set(contract.get("reserved_services", ["nixiz-agent"]))
+    reserved = set(contract.get("reserved_services", ["wrtix-agent"]))
     nodes = {name: merge_resource_sets(node) for name, node in nodes.items()}
     prepared = {name: prepare_resources(node, reserved) for name, node in nodes.items()}
     fleet_view = {name: {"identity": node.get("identity", {}), **resource_view(prepared[name])}
@@ -470,8 +468,8 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
                 hash_ = SENTINEL_HASH
             if not isinstance(hash_, str) or not re.fullmatch(r"\$(?:5|6|y)\$[A-Za-z0-9./$=,-]+", hash_) or len(hash_) > 1024:
                 raise CompileError("invalid root password hash")
-            files["etc/nixiz/root-password-hash"] = (hash_ + "\n").encode()
-            modes["etc/nixiz/root-password-hash"] = "600"
+            files["etc/wrtix/root-password-hash"] = (hash_ + "\n").encode()
+            modes["etc/wrtix/root-password-hash"] = "600"
         keys = user.get("authorizedKeys")
         if keys is not None:
             if not isinstance(keys, list) or any(not isinstance(k, str) or not k.strip() or any(c in k for c in "\n\r\x00") for k in keys):
@@ -480,8 +478,8 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
                 raise CompileError("authorized keys have multiple owners")
             files["etc/dropbear/authorized_keys"] = ("\n".join(keys) + ("\n" if keys else "")).encode()
             modes["etc/dropbear/authorized_keys"] = "600"
-        files["etc/nixiz/identity.json"] = canonical({"schema_version": 1, "device_id": name})
-        modes["etc/nixiz/identity.json"] = "600"
+        files["etc/wrtix/identity.json"] = canonical({"schema_version": 1, "device_id": name})
+        modes["etc/wrtix/identity.json"] = "600"
         if len(files) > 128 or any(len(data) > 131072 for data in files.values()):
             raise CompileError("configuration exceeds transaction resource limits")
         resolver_spec = node.get("resolver")

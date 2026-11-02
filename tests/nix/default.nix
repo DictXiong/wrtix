@@ -1,11 +1,9 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
-{ pkgs, nixiz }:
+{ pkgs, wrtix }:
 let
   lib = pkgs.lib;
   fixture = import ../../examples/metadata-profile.nix;
-  evaluate = modules: nixiz.lib.openwrtConfiguration { inherit pkgs modules; };
+  evaluate = modules: wrtix.lib.openwrtConfiguration { inherit pkgs modules; };
   base = {
     services.openwrt = {
       enable = true;
@@ -44,7 +42,7 @@ let
         };
       }
     ]).config.services.openwrt.manifest;
-  quickStart = (import ../../templates/minimal/flake.nix).outputs { inherit nixiz; };
+  quickStart = (import ../../templates/minimal/flake.nix).outputs { inherit wrtix; };
   quickStartDevice =
     quickStart.openwrtConfigurations.home.config.services.openwrt.manifest.devices.router;
   apExample =
@@ -89,10 +87,10 @@ let
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
   nixos =
     modules:
-    nixiz.inputs.nixpkgs.lib.nixosSystem {
+    wrtix.inputs.nixpkgs.lib.nixosSystem {
       system = pkgs.stdenv.hostPlatform.system;
       modules = [
-        nixiz.nixosModules.default
+        wrtix.nixosModules.default
         { system.stateVersion = "26.05"; }
       ]
       ++ modules;
@@ -140,7 +138,7 @@ let
     assert noProfile.devices.router.target_host == "2001:db8::1";
     assert noProfile.devices.router.identity == { };
     assert noProfile.devices.router.users.root.passwordHash == null;
-    assert quickStartDevice.files."/etc/nixiz-example".text == "Managed by nixiz\n";
+    assert quickStartDevice.files."/etc/wrtix-example".text == "Managed by wrtix\n";
     assert quickStartDevice.checks == { };
     assert quickStartDevice.identity == { };
     assert quickStartDevice.uci == { };
@@ -190,6 +188,6 @@ let
     true;
 in
 assert checked;
-pkgs.runCommand "nixiz-module-tests" { } ''
+pkgs.runCommand "wrtix-module-tests" { } ''
   touch "$out"
 ''

@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 # SPDX-License-Identifier: GPL-2.0-only
 {
   config,
@@ -77,7 +75,7 @@ let
         modules = [
           ./resource-container.nix
           {
-            _file = "nixiz base device ${name}";
+            _file = "wrtix base device ${name}";
             config = resources device;
           }
           (generated.config.devices.${name} or { })

@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Resolve deployment-only SOPS references without persistent plaintext files."""
 from __future__ import annotations
 

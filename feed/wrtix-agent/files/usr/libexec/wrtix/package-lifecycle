@@ -1,16 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 set -eu
 umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
-root=/etc/nixiz
-agent=/usr/libexec/nixiz/agent
+root=/etc/wrtix
+agent=/usr/libexec/wrtix/agent
 marker=$root/package-operation
 commit=$root/package-commit
-fail() { printf 'nixiz-agent: %s\n' "$1" >&2; exit 1; }
+fail() { printf 'wrtix-agent: %s\n' "$1" >&2; exit 1; }
 [ -d "$root" ] && [ ! -L "$root" ] || fail unsafe_state_directory
 [ ! -L "$root/transaction.lock" ] || fail unsafe_lock
 exec 9> "$root/transaction.lock"
@@ -62,30 +60,30 @@ case "${1:-}" in
   # The persistent marker blocks staging after releasing the package lock.
   # No transaction is active. Stop only this package's own watcher, retaining
   # every user's network, service and authentication setting.
-  /etc/init.d/nixiz-agent stop >/dev/null 2>&1 || fail guard_stop_failed
+  /etc/init.d/wrtix-agent stop >/dev/null 2>&1 || fail guard_stop_failed
   if [ "$1" = prepare-remove ]; then
-   /etc/init.d/nixiz-agent disable >/dev/null 2>&1 || fail guard_disable_failed
+   /etc/init.d/wrtix-agent disable >/dev/null 2>&1 || fail guard_disable_failed
   fi
   ;;
  finish-install|finish-commit)
   [ -f "$marker" ] || fail missing_package_marker
   # Verify the exact package-owned runtime set before permitting deployments.
-  [ -f /usr/share/nixiz/runtime.sha256 ] && [ ! -L /usr/share/nixiz/runtime.sha256 ] || fail missing_runtime_inventory
+  [ -f /usr/share/wrtix/runtime.sha256 ] && [ ! -L /usr/share/wrtix/runtime.sha256 ] || fail missing_runtime_inventory
   awk 'NF!=2 || length($1)!=64 || $1 !~ /^[0-9a-f]+$/ {exit 1}
-   $2=="usr/libexec/nixiz/agent" {a++;next}
-   $2=="etc/init.d/nixiz-agent" {b++;next}
-   $2=="usr/share/nixiz/contract.json" {c++;next}
-   {exit 1} END {if(a!=1 || b!=1 || c!=1) exit 1}' /usr/share/nixiz/runtime.sha256 || fail invalid_runtime_inventory
-  (cd /; sha256sum -c /usr/share/nixiz/runtime.sha256 >/dev/null) || fail runtime_hash_mismatch
+   $2=="usr/libexec/wrtix/agent" {a++;next}
+   $2=="etc/init.d/wrtix-agent" {b++;next}
+   $2=="usr/share/wrtix/contract.json" {c++;next}
+   {exit 1} END {if(a!=1 || b!=1 || c!=1) exit 1}' /usr/share/wrtix/runtime.sha256 || fail invalid_runtime_inventory
+  (cd /; sha256sum -c /usr/share/wrtix/runtime.sha256 >/dev/null) || fail runtime_hash_mismatch
   cp -p "$marker" "$marker.saved.$$"
   trap '[ ! -f "$marker.saved.$$" ] || mv "$marker.saved.$$" "$marker"' EXIT HUP INT TERM
   rm "$marker"
-  if ! "$agent" identity | jq -e '.profile=="nixiz-v2" and (.contract_sha256|type=="string" and length==64)' >/dev/null; then
+  if ! "$agent" identity | jq -e '.profile=="wrtix-v2" and (.contract_sha256|type=="string" and length==64)' >/dev/null; then
    mv "$marker.saved.$$" "$marker"
    fail runtime_identity_failed
   fi
   idle
-  /etc/init.d/nixiz-agent enable >/dev/null 2>&1 || fail guard_enable_failed
+  /etc/init.d/wrtix-agent enable >/dev/null 2>&1 || fail guard_enable_failed
   if [ "$1" = finish-install ] && command -v apk >/dev/null 2>&1; then
    mv "$marker.saved.$$" "$marker"
   else

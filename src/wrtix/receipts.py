@@ -1,5 +1,3 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 """Private local transaction state; management never contacts Nix, SOPS or an AP."""
 from __future__ import annotations
 

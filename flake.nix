@@ -1,7 +1,5 @@
-# This file was generated entirely by AI.
-# It has not been reviewed line by line by a human.
 {
-  description = "nixiz: declarative OpenWrt configuration and transactional deployment";
+  description = "wrtix: declarative OpenWrt configuration and transactional deployment";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
   outputs =
     { self, nixpkgs }:
@@ -41,8 +39,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          nixiz = pkgs.callPackage ./nix/package.nix { };
-          default = self.packages.${system}.nixiz;
+          wrtix = pkgs.callPackage ./nix/package.nix { };
+          default = self.packages.${system}.wrtix;
         }
       );
       apps = eachSystem (system: {
@@ -50,12 +48,12 @@
         openwrt-rebuild = {
           type = "app";
           meta.description = "Build and deploy declarative OpenWrt configurations";
-          program = "${self.packages.${system}.nixiz}/bin/openwrt-rebuild";
+          program = "${self.packages.${system}.wrtix}/bin/openwrt-rebuild";
         };
         openwrt-deploy = {
           type = "app";
           meta.description = "Manage OpenWrt configuration transactions";
-          program = "${self.packages.${system}.nixiz}/bin/openwrt-deploy";
+          program = "${self.packages.${system}.wrtix}/bin/openwrt-deploy";
         };
       });
       checks = eachSystem (
@@ -66,13 +64,13 @@
         {
           modules = import ./tests/nix/default.nix {
             inherit pkgs;
-            nixiz = self;
+            wrtix = self;
           };
           controller =
-            pkgs.runCommand "nixiz-controller-tests"
+            pkgs.runCommand "wrtix-controller-tests"
               {
                 nativeBuildInputs = with pkgs; [
-                  self.packages.${system}.nixiz.testPythonEnvironment
+                  self.packages.${system}.wrtix.testPythonEnvironment
                   sops
                   ssh-to-age
                   ssh-to-pgp
@@ -82,16 +80,16 @@
               }
               ''
                 export PYTHONDONTWRITEBYTECODE=1
-                export NIXIZ_AGENT_DATA=${self}/agent
+                export WRTIX_AGENT_DATA=${self}/agent
                 python3 ${self}/tests/test_controller.py
                 python3 ${self}/tests/test_controller_inherited.py
                 touch "$out"
               '';
           target =
-            pkgs.runCommand "nixiz-target-tests"
+            pkgs.runCommand "wrtix-target-tests"
               {
                 nativeBuildInputs = with pkgs; [
-                  self.packages.${system}.nixiz.testPythonEnvironment
+                  self.packages.${system}.wrtix.testPythonEnvironment
                   jq
                   util-linux
                   coreutils
@@ -110,7 +108,7 @@
                 touch "$out"
               '';
           backup =
-            pkgs.runCommand "nixiz-package-backup-tests"
+            pkgs.runCommand "wrtix-package-backup-tests"
               {
                 nativeBuildInputs = with pkgs; [
                   python3
@@ -128,7 +126,7 @@
                 python3 ${self}/tests/test_package_backup.py
                 touch "$out"
               '';
-          package = self.packages.${system}.nixiz;
+          package = self.packages.${system}.wrtix;
         }
       );
       formatter = eachSystem (system: nixpkgs.legacyPackages.${system}.nixfmt);
