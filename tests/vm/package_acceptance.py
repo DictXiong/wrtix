@@ -71,8 +71,8 @@ def main():
         remote('cat > /etc/apk/keys/' + shlex.quote(public.name), public.read_bytes())
         # No allow-untrusted: installation must authenticate the actual SDK APK.
         remote(install)
-        installed = remote('apk info -v wrtix-agent').stdout.decode()
-        if 'wrtix-agent-' + metadata['package_version'] not in installed:
+        installed = remote('apk info -e ' + shlex.quote('wrtix-agent=' + metadata['package_version']), check=False)
+        if installed.returncode:
             raise RuntimeError('installed version differs from the release metadata')
         if hashes() != before:
             raise RuntimeError('package installation changed network or authentication')

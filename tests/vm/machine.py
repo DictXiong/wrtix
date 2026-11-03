@@ -89,7 +89,7 @@ def start(directory, port, alternate_port):
             "-device", "virtio-net-pci,netdev=management",
             "-netdev", f"user,id=management,hostfwd=tcp:127.0.0.1:{port}-10.0.2.15:22,hostfwd=tcp:127.0.0.1:{alternate_port}-10.0.2.16:22,hostfwd=tcp:127.0.0.2:{port}-10.0.2.16:22",
             "-display", "none", "-chardev", f"socket,id=serial,path={directory / 'serial.sock'},server=on,wait=off,logfile={directory / 'console.log'}", "-serial", "chardev:serial",
-            "-monitor", f"unix:{monitor},server=on,wait=off", "-no-reboot"]
+            "-qmp", f"unix:{monitor},server=on,wait=off", "-no-reboot"]
     # Reboots are required by the acceptance suite; QEMU must survive them.
     args.remove("-no-reboot")
     with (directory / "qemu.log").open("ab") as log:
@@ -111,8 +111,26 @@ def stop(directory):
     stat = Path(f"/proc/{info['pid']}/stat")
     if stat.exists() and stat.read_text().split()[21] == info["start_ticks"]:
         with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
             connection.connect(str(directory / "monitor.sock"))
-            connection.sendall(b"quit\n")
+            with connection.makefile("rwb") as monitor:
+                greeting = json.loads(monitor.readline())
+                if "QMP" not in greeting:
+                    raise RuntimeError("unexpected VM monitor protocol")
+                for command in ("qmp_capabilities", "quit"):
+                    monitor.write(json.dumps({"execute": command}).encode() + b"\n")
+                    monitor.flush()
+                    while True:
+                        line = monitor.readline()
+                        if not line:
+                            if command != "quit":
+                                raise RuntimeError("VM monitor closed before quit")
+                            break
+                        response = json.loads(line)
+                        if "error" in response:
+                            raise RuntimeError("VM monitor rejected " + command)
+                        if "return" in response:
+                            break
         for _ in range(50):
             if not stat.exists() or stat.read_text().split()[2] == "Z":
                 break
