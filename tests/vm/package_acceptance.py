@@ -85,9 +85,12 @@ def main():
         acceptance = Acceptance(argparse.Namespace(
             key=vm / 'identity', known_hosts=vm / 'known_hosts', output=work / 'controller',
             host='127.0.0.1', alternate_host='127.0.0.2', port=22080))
-        acceptance.run()
+        accepted = acceptance.run()
         success('controller enrollment, handoff, receipts, guarded reboot and rollback acceptance')
-        pending = acceptance.node(files={'/etc/wrtix-package-probe': {'text': 'candidate\n', 'mode': '0600'}})
+        # Keep the complete accepted resources: omitting previously owned
+        # network/service declarations would deliberately remove management.
+        pending = accepted
+        pending['files'] = {'/etc/wrtix-package-probe': {'text': 'candidate\n', 'mode': '0600'}}
         receipt = acceptance.receipt('package-fence')
         acceptance.command('deploy', pending, name='package-fence', options=('--receipt', receipt, '--ttl', '180'))
         immutable = remote('sha256sum /usr/libexec/wrtix/agent /etc/init.d/wrtix-agent /usr/share/wrtix/contract.json').stdout

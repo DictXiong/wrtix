@@ -249,6 +249,7 @@ class Acceptance:
         self.save('summary.json', {'openwrt': release.decode(), 'passed': self.results,
                                   'not_covered': ['wireless and hardware acceleration (VM has neither)',
                                                   'physical device/AP-specific checks']})
+        return copy.deepcopy(restore)
 
 
 def main():
