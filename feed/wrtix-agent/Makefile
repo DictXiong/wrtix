@@ -3,14 +3,15 @@ WRTIX_SOURCE_DIR:=$(abspath $(dir $(realpath $(lastword $(MAKEFILE_LIST))))/../.
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=wrtix-agent
-PKG_VERSION:=0.2.0
+WRTIX_VERSION:=$(strip $(shell cat $(WRTIX_SOURCE_DIR)/VERSION))
+PKG_VERSION:=$(subst -rc.,_rc,$(subst -beta.,_beta,$(subst -alpha.,_alpha,$(WRTIX_VERSION))))
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
-PKGARCH:=all
 
 include $(INCLUDE_DIR)/package.mk
 
 define Package/wrtix-agent
+  PKGARCH:=all
   SECTION:=admin
   CATEGORY:=Administration
   TITLE:=Transactional declarative OpenWrt configuration agent

@@ -28,7 +28,14 @@ APK pre-removal scripts alone cannot enforce this: the pre-commit hook is part o
 the protection. The VM uses APK 3; older opkg-based releases have not received the
 same real package-manager acceptance.
 
-The architecture-independent local test APK is not an SDK build. Full image
+Release CI additionally builds with the pinned official SDK and runs
+`tests/vm/package_acceptance.py` against that exact signed artifact. It verifies
+installation without bypassing signature checks, idle replacement/removal,
+pending-transaction package fences, and the controller acceptance above. Raw VM
+credentials and receipts are not published. This suite requires networking and
+virtualization and remains outside `nix flake check`.
+
+The architecture-independent local helper APK is not an SDK build. Full image
 compilation, sysupgrade across firmware versions, physical radio performance,
 VLAN/PPE behavior and consumer-specific roaming tests remain separate downstream
 responsibilities. Do not infer them from a successful VM test. A consumer profile

@@ -16,8 +16,9 @@ and obtains its own management address by DHCP. Existing SSH credentials are
 preserved. **No custom profile or validator is needed.**
 
 Prerequisites: Linux with Nix flakes enabled, SSH access, and a matching
-[`wrtix-agent` package](feed/README.md) installed on OpenWrt. The agent is built
-through an OpenWrt feed; it is not yet in the official package repositories.
+[`wrtix-agent` package](feed/README.md) installed on OpenWrt. Download the signed OpenWrt 25.12 APK from
+[Releases](https://github.com/DictXiong/wrtix/releases), or build it through the
+OpenWrt feed. It is not yet in the official package repositories.
 The example targets standard OpenWrt with individually named LAN devices, the
 usual LAN firewall zone, and a 2.4GHz mac80211 radio. Check the actual port and
 PHY names first; the sample values are not hardware detection.

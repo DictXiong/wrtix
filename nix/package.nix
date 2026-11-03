@@ -17,7 +17,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "wrtix";
-  version = "0.2.0";
+  version = lib.removeSuffix "\n" (builtins.readFile ../VERSION);
   src = lib.cleanSourceWith {
     src = ../.;
     filter =

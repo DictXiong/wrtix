@@ -2,7 +2,8 @@
 
 ## Configure
 
-Install a matching `wrtix-agent` package on the OpenWrt target through the feed.
+Install a matching `wrtix-agent` package on the OpenWrt target from the signed
+[release packages or OpenWrt feed](../feed/README.md).
 Keep your existing SSH credentials and host-key verification. Installing the
 package does not enroll the device or change its networking.
 

@@ -68,3 +68,22 @@ python3 tests/vm/controller_acceptance.py \
 It requires an unenrolled VM, deliberately changes its configuration, and restores
 the original management address and MAC. It leaves a registered synthetic device
 for further inspection. Results include individual passes and explicit exclusions.
+
+## Release artifact acceptance
+
+To exercise the actual SDK-built and signed package rather than the local test
+APK, run from the repository root with Python's PyYAML dependency available:
+
+```sh
+python3 ci/build-package.py --work /tmp/wrtix-sdk-build --output /tmp/wrtix-artifacts
+python3 tests/vm/package_acceptance.py --artifacts /tmp/wrtix-artifacts \
+  --directory /tmp/wrtix-release-vm
+```
+
+Both output directories must be new. The SDK builder needs the normal OpenWrt
+Linux build prerequisites, curl, zstd and OpenSSL. The VM runner downloads and
+checks the pinned image, trusts only the artifact's accompanying public key,
+installs without `--allow-untrusted`, exercises the controller and package gates,
+and stops its VM on exit. It writes a non-secret `summary.json` alongside private
+VM state. CI publishes only the summary and explicitly selected boot diagnostics;
+never upload the whole working directory.
