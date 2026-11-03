@@ -62,12 +62,13 @@ def main():
             time.sleep(2)
         remote('apk update && apk add jq flock coreutils-timeout')
         before = hashes()
-        remote('mkdir -p /tmp/wrtix-release')
-        package_path = '/tmp/wrtix-release/' + shlex.quote(package.name)
+        # The controller suite reboots twice; keep package inputs off tmpfs.
+        remote('mkdir -p /root/wrtix-release')
+        package_path = '/root/wrtix-release/' + shlex.quote(package.name)
         remote('cat > ' + package_path, package.read_bytes())
-        remote('cat > /tmp/wrtix-release/packages.adb', (artifacts / 'packages.adb').read_bytes())
+        remote('cat > /root/wrtix-release/packages.adb', (artifacts / 'packages.adb').read_bytes())
         install = 'apk add ' + package_path
-        replace = 'apk --no-network --repository /tmp/wrtix-release/packages.adb fix --reinstall wrtix-agent'
+        replace = 'apk --no-network --repository /root/wrtix-release/packages.adb fix --reinstall wrtix-agent'
         remote('cat > /etc/apk/keys/' + shlex.quote(public.name), public.read_bytes())
         # No allow-untrusted: installation must authenticate the actual SDK APK.
         remote(install)
@@ -95,8 +96,9 @@ def main():
         acceptance.command('deploy', pending, name='package-fence', options=('--receipt', receipt, '--ttl', '180'))
         immutable = remote('sha256sum /usr/libexec/wrtix/agent /etc/init.d/wrtix-agent /usr/share/wrtix/contract.json').stdout
         for operation in ('apk del wrtix-agent', replace):
-            if remote(operation, check=False).returncode == 0:
-                raise RuntimeError('pending transaction did not veto package operation')
+            blocked = remote(operation, check=False)
+            if blocked.returncode == 0 or b'wrtix-agent: transaction_pending' not in blocked.stderr:
+                raise RuntimeError('package operation did not report the pending-transaction veto')
             if remote('sha256sum /usr/libexec/wrtix/agent /etc/init.d/wrtix-agent /usr/share/wrtix/contract.json').stdout != immutable:
                 raise RuntimeError('rejected package operation changed runtime')
         success('pending transaction rejects removal and replacement before runtime mutation')
