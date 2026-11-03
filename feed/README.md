@@ -116,7 +116,7 @@ being `all` describes script architecture, not universal runtime compatibility.
 `VERSION` supplies the Nix package version and OpenWrt package version; APK
 prereleases use its native spelling, for example `1.0.0_alpha1-r1` for
 `v1.0.0-alpha.1`. `ci/openwrt-sdk.json` fixes the official SDK checksum and the
-dependency feed revision. `ci/build-package.py` builds through that SDK and
+base and dependency feed revisions. `ci/build-package.py` builds through that SDK and
 exports only the APK, its signed package index, public signing key, compatibility
 metadata and checksums.
 

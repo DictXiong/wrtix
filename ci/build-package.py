@@ -58,9 +58,10 @@ def main():
     sdk.mkdir()
     run(['tar', '--zstd', '-xf', archive, '-C', sdk, '--strip-components=1'])
     # Pin only the dependency feed we use; never fetch moving SDK feed branches.
-    (sdk / 'feeds.conf').write_text('src-git packages ' + PIN['packages_feed'] + '\n'
+    (sdk / 'feeds.conf').write_text('src-git base ' + PIN['base_feed'] + '\n'
+                                   'src-git packages ' + PIN['packages_feed'] + '\n'
                                    'src-link wrtix ' + str(ROOT) + '\n')
-    run(['./scripts/feeds', 'update', 'packages', 'wrtix'], cwd=sdk)
+    run(['./scripts/feeds', 'update', 'base', 'packages', 'wrtix'], cwd=sdk)
     run(['./scripts/feeds', 'install', 'wrtix-agent'], cwd=sdk)
     with (sdk / '.config').open('a') as config:
         config.write('\nCONFIG_PACKAGE_wrtix-agent=m\nCONFIG_SIGNED_PACKAGES=y\nCONFIG_SIGN_EACH_PACKAGE=y\n')
@@ -74,7 +75,7 @@ def main():
     with (sdk / 'public-key.pem').open('wb') as stream:
         run(['openssl', 'pkey', '-in', key, '-pubout'], stdout=stream)
     try:
-        run(['make', '-j' + str(args.jobs), 'package/wrtix-agent/compile', 'V=s'], cwd=sdk)
+        run(['make', '-j' + str(args.jobs), 'package/wrtix-agent/compile', 'CONFIG_SIGN_EACH_PACKAGE=y', 'V=s'], cwd=sdk)
         packages = list((sdk / 'bin').rglob('wrtix-agent-*.apk'))
         if len(packages) != 1:
             raise RuntimeError('expected exactly one SDK-built APK')
