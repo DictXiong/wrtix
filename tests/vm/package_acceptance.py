@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -101,11 +100,16 @@ def main():
         acceptance.command('rollback', name='package-fence-restore', options=('--receipt', receipt))
         acceptance.wait_state('rolled-back', 90)
         before = hashes()
+        enrolled = json.loads(remote('/usr/libexec/wrtix/agent identity').stdout)['identity']
+        ledger = remote('sha256sum /etc/wrtix/managed.json').stdout
         remote('apk del wrtix-agent')
         if remote('test ! -e /usr/libexec/wrtix/agent', check=False).returncode != 0 or hashes() != before:
             raise RuntimeError('idle package removal did not preserve user configuration')
         remote(install)
-        remote('/usr/libexec/wrtix/agent identity')
+        if json.loads(remote('/usr/libexec/wrtix/agent identity').stdout)['identity'] != enrolled:
+            raise RuntimeError('idle removal/reinstall lost enrolled identity')
+        if remote('sha256sum /etc/wrtix/managed.json').stdout != ledger:
+            raise RuntimeError('idle removal/reinstall changed resource ownership')
         success('idle removal and reinstall retain configuration and enrolled identity')
         summary = {'openwrt': machine.PIN['release'], 'package': package.name,
                    'package_sha256': metadata['package_sha256'], 'passed': passed,

@@ -88,7 +88,7 @@ def main():
         shutil.copyfile(packages[0], package)
         public = output / ('wrtix-v' + release + '.pem')
         shutil.copyfile(sdk / 'public-key.pem', public)
-        run([apk, 'mkndx', '--sign', key, '--output', output / 'packages.adb', package])
+        run([apk, 'mkndx', '--keys-dir', sdk, '--sign', key, '--output', output / 'packages.adb', package])
     finally:
         key.unlink(missing_ok=True)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()

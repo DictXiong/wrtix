@@ -42,6 +42,11 @@ does not change the network, password or authorized keys, and does not register
 the device. Use the matching controller and explicitly run `switch --init` for
 first enrollment; see [usage](../docs/usage.md). The controller checks protocol
 compatibility rather than assuming that similarly named versions are compatible.
+Pin the controller input to the agent release, then retain the generated lock file:
+
+```nix
+inputs.wrtix.url = "github:DictXiong/wrtix/v1.0.0-alpha.1";
+```
 
 ## Build through an OpenWrt feed
 
