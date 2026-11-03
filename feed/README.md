@@ -28,7 +28,7 @@ Copy the APK and verified public key to your router through an authenticated
 administrator session (adjust host and SSH options to your device):
 
 ```sh
-scp wrtix-agent-1.0.0_alpha1-r1.apk wrtix-v1.0.0-alpha.1.pem root@router.example:/tmp/
+scp -O wrtix-agent-1.0.0_alpha1-r1.apk wrtix-v1.0.0-alpha.1.pem root@router.example:/tmp/
 ssh root@router.example
 mkdir -p /etc/apk/keys
 cp /tmp/wrtix-v1.0.0-alpha.1.pem /etc/apk/keys/

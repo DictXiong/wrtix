@@ -64,7 +64,7 @@ def main():
     run(['./scripts/feeds', 'update', 'base', 'packages', 'wrtix'], cwd=sdk)
     run(['./scripts/feeds', 'install', 'wrtix-agent'], cwd=sdk)
     with (sdk / '.config').open('a') as config:
-        config.write('\nCONFIG_PACKAGE_wrtix-agent=m\nCONFIG_SIGNED_PACKAGES=y\nCONFIG_SIGN_EACH_PACKAGE=y\n')
+        config.write('\nCONFIG_PACKAGE_wrtix-agent=m\nCONFIG_SIGNED_PACKAGES=y\n')
     run(['make', 'defconfig'], cwd=sdk)
     # Each build has its own signing identity. Only its public key is exported;
     # release provenance authenticates both the package and that exact key.
@@ -75,11 +75,15 @@ def main():
     with (sdk / 'public-key.pem').open('wb') as stream:
         run(['openssl', 'pkey', '-in', key, '-pubout'], stdout=stream)
     try:
-        run(['make', '-j' + str(args.jobs), 'package/wrtix-agent/compile', 'CONFIG_SIGN_EACH_PACKAGE=y', 'V=s'], cwd=sdk)
+        run(['make', '-j' + str(args.jobs), 'package/wrtix-agent/compile', 'V=s'], cwd=sdk)
         packages = list((sdk / 'bin').rglob('wrtix-agent-*.apk'))
         if len(packages) != 1:
             raise RuntimeError('expected exactly one SDK-built APK')
         apk = sdk / 'staging_dir/host/bin/apk'
+        # 25.12.0's SDK signs repository indexes, not individual APKs. Sign
+        # our own freshly built artifact explicitly, then verify it when
+        # indexing below. This flag never reaches installation on the target.
+        run([apk, 'adbsign', '--allow-untrusted', '--sign', key, packages[0]])
         dumped = subprocess.check_output([str(apk), 'adbdump', str(packages[0])], text=True)
         if not re.search(r'\barch:\s*noarch\b', dumped):
             raise RuntimeError('SDK artifact must actually declare noarch')
