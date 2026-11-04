@@ -12,10 +12,10 @@ their checksums and GitHub Actions provenance:
 
 ```sh
 mkdir wrtix-release && cd wrtix-release
-gh release download v1.0.0-alpha.1 --repo DictXiong/wrtix
+gh release download v1.0.0 --repo DictXiong/wrtix
 sha256sum --check SHA256SUMS
-gh attestation verify wrtix-agent-1.0.0_alpha1-r1.apk --repo DictXiong/wrtix
-gh attestation verify wrtix-v1.0.0-alpha.1.pem --repo DictXiong/wrtix
+gh attestation verify wrtix-agent-1.0.0-r1.apk --repo DictXiong/wrtix
+gh attestation verify wrtix-v1.0.0.pem --repo DictXiong/wrtix
 ```
 
 Each build uses a release-specific signing key. The private key is discarded;
@@ -28,12 +28,12 @@ Copy the APK and verified public key to your router through an authenticated
 administrator session (adjust host and SSH options to your device):
 
 ```sh
-scp -O wrtix-agent-1.0.0_alpha1-r1.apk wrtix-v1.0.0-alpha.1.pem root@router.example:/tmp/
+scp -O wrtix-agent-1.0.0-r1.apk wrtix-v1.0.0.pem root@router.example:/tmp/
 ssh root@router.example
 mkdir -p /etc/apk/keys
-cp /tmp/wrtix-v1.0.0-alpha.1.pem /etc/apk/keys/
+cp /tmp/wrtix-v1.0.0.pem /etc/apk/keys/
 apk update
-apk add /tmp/wrtix-agent-1.0.0_alpha1-r1.apk
+apk add /tmp/wrtix-agent-1.0.0-r1.apk
 ```
 
 No `--allow-untrusted` is required. Installation validates the package signature
@@ -45,7 +45,7 @@ compatibility rather than assuming that similarly named versions are compatible.
 Pin the controller input to the agent release, then retain the generated lock file:
 
 ```nix
-inputs.wrtix.url = "github:DictXiong/wrtix/v1.0.0-alpha.1";
+inputs.wrtix.url = "github:DictXiong/wrtix/v1.0.0";
 ```
 
 ## Build through an OpenWrt feed
@@ -128,7 +128,8 @@ metadata and checksums.
 CI runs the module/controller checks and builds the APK on pushes and pull
 requests. The actual signed artifact must then pass the isolated official VM's
 package and controller acceptance. A matching `v<VERSION>` tag publishes a
-pre-release only after all three jobs pass, and creates GitHub provenance
+release only after all three jobs pass, and creates GitHub provenance
 attestations for the release assets. CI never publishes raw VM credentials or
 controller receipts. Add public release notes at `docs/releases/<tag>.md` before
-tagging. Existing releases are not overwritten.
+tagging. Stable versions become the latest release; alpha/beta/rc tags remain
+pre-releases. Existing releases are not overwritten.
