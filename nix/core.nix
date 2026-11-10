@@ -174,6 +174,21 @@ in
         default = [ ];
       };
     };
+    secretProviders = mkOption {
+      default = { };
+      description = "Deployment-time secret programs. Public lookup requests use stdin; private results use stdout.";
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            executable = mkOption { type = types.path; };
+            timeoutSeconds = mkOption {
+              type = types.ints.between 1 120;
+              default = 30;
+            };
+          };
+        }
+      );
+    };
     package = mkOption {
       type = types.package;
       default = pkgs.callPackage ./package.nix { };
@@ -194,6 +209,7 @@ in
           schema_version = 1;
           kind = "openwrt-fleet";
           inherit (cfg) deployment decryption;
+          secretProviders = normalize cfg.secretProviders;
           devices = normalize final;
         };
         manifestFile = pkgs.writeText "openwrt-fleet.json" (builtins.toJSON cfg.manifest);

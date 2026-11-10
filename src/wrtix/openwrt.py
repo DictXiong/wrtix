@@ -28,6 +28,7 @@ from compiler import CompileError, compile_fleet, digest
 from secret_refs import SecretError, SecretResolver, duplicate_free
 from progress import Progress
 from receipts import ReceiptError, allocate_receipt, clean_receipts, default_directory, list_receipts, receipt_lock
+from packages import missing_packages
 
 HERE = Path(__file__).resolve().parent
 REBOOT_INPUT_SECONDS = 150
@@ -95,6 +96,17 @@ def load_manifest(args):
     return read_json(args.manifest)
 
 
+def package_preparation_command(args, node):
+    wrapper = HERE.parents[1] / "bin/openwrt-deploy"
+    command = [str(wrapper)] if wrapper.is_file() else [sys.executable, str(HERE / "openwrt.py")]
+    command += ["--manifest", str(Path(args.manifest).resolve()), "prepare-packages", "--device", node]
+    for field in ("target_host", "port", "control_socket", "jump_host", "known_hosts"):
+        value = getattr(args, field, None)
+        if value is not None:
+            command += ["--" + field.replace("_", "-"), str(value)]
+    return shlex.join(command)
+
+
 # Only fixed protocol codes from the bundled runtime may appear in diagnostics.
 # Unknown stderr, including plugin output, is never copied to the terminal.
 REMOTE_ERROR_CODES = frozenset("""
@@ -134,6 +146,10 @@ reboot_readback_mismatch invalid_resume_request resume_boot_mismatch invalid_res
 resume_workspace_failed no_reboot_to_resume post_reboot_readback_failed reboot_required
 wireless_mac_check_failed wireless_mac_config_invalid
 agent_check_failed invalid_checks check_unavailable preflight_check_failed preconfirm_check_failed postrollback_check_failed
+invalid_packages package_preparation_running package_manager_unavailable package_install_failed
+package_verification_failed package_operation_changed package_operation_active restoration_pending
+transaction_status_unavailable
+package_preparation_not_owned
 """.split())
 
 
@@ -272,9 +288,9 @@ class Transport:
     def _endpoint(self):
         return self.destination() + ":" + str(self.port)
 
-    def _run_stage(self, stage, command, data=None):
+    def _run_stage(self, stage, command, data=None, timeout=60):
         try:
-            return self.run(command, data=data)
+            return self.run(command, data=data, timeout=timeout)
         except DeployError as error:
             raise DeployError(stage + ": " + str(error)) from None
 
@@ -379,18 +395,20 @@ class Transport:
         return proc.stdout
 
     def call(self, action, token=None, data=None):
-        if action not in {"check", "verify", "stage", "apply", "status", "confirm", "rollback", "reboot", "resume"}:
+        if action not in {"check", "verify", "stage", "apply", "status", "confirm", "rollback", "reboot", "resume", "package-prepare"}:
             raise DeployError("invalid transaction command")
         if token is not None and not re.fullmatch(r"[0-9a-f]{32}", token):
             raise DeployError("invalid receipt token")
-        result = self._run_stage(action, shlex.join(["sh", REMOTE, action] + ([] if token is None else [token])), data=data)
+        result = self._run_stage(action, shlex.join(["sh", REMOTE, action] + ([] if token is None else [token])),
+                                 data=data, timeout=1800 if action == "package-prepare" else 60)
         try:
             return json.loads(result)
         except ValueError:
             raise DeployError("invalid transaction response") from None
 
     def agent_contract(self):
-        output = self._run_stage("agent identity preflight", shlex.join(["sh", REMOTE, "identity"]))
+        action = "package-identity" if getattr(self.args, "command", None) == "prepare-packages" else "identity"
+        output = self._run_stage("agent identity preflight", shlex.join(["sh", REMOTE, action]))
         try:
             result = json.loads(output)
             if (not isinstance(result, dict) or result.get("profile") != "wrtix-v2"
@@ -967,7 +985,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest")
     sub = parser.add_subparsers(dest="command", required=True)
-    for action in ("plan", "deploy", "verify", "status", "confirm", "rollback"):
+    for action in ("plan", "prepare-packages", "deploy", "verify", "status", "confirm", "rollback"):
         child = sub.add_parser(action)
         child.add_argument("--device")
         child.add_argument("--all", action="store_true")
@@ -1123,7 +1141,7 @@ def main(argv=None):
     if args.command == "deploy" and len(selected) > 1 and not args.auto_confirm:
         raise DeployError("bulk deploy requires --auto-confirm; otherwise deploy and confirm one device at a time")
     runtime = args.command in ("deploy", "verify")
-    resolver = SecretResolver.from_config(manifest.get("decryption", {}))
+    resolver = SecretResolver.from_config(manifest.get("decryption", {}), providers=manifest.get("secretProviders", {}))
     transports = contextlib.ExitStack()
     try:
         # All inputs are resolved before first remote write, including fleet peers.
@@ -1175,13 +1193,23 @@ def main(argv=None):
                 emit(public_status(result))
                 continue
             with device_progress.stage("Checking agent identity"):
-                contract = transport.agent_preflight(allow_initialize=args.initialize)
+                contract = transport.agent_preflight(allow_initialize=args.initialize or args.command == "prepare-packages")
+            if args.command == "prepare-packages":
+                with device_progress.stage("Preparing required packages (outside configuration rollback)"):
+                    result = transport.call("package-prepare", data=canonical(compiled["packages"]))
+                    if (result.get("state") != "packages-ready" or result.get("packages") != compiled["packages"]):
+                        raise DeployError("package preparation could not be verified")
+                emit({"device": node, **result})
+                continue
             initialize = args.initialize and not contract["identity"].get("device_id")
             if compiled["packages"]:
                 # Package installs/removals are deliberately separate from rollbackable config.
-                probe = "\n".join("(apk info -e " + shlex.quote(package) + " >/dev/null 2>&1 || opkg status " + shlex.quote(package) + " 2>/dev/null | grep -q 'Status:.* installed') || exit 42" for package in compiled["packages"])
                 with device_progress.stage("Checking installed packages"):
-                    transport._run_stage("installed package preflight", probe)
+                    missing = missing_packages(transport, compiled["packages"])
+                    if missing:
+                        raise DeployError("required packages are missing: " + ", ".join(missing)
+                                          + "\nRun this command, then retry deployment:\n  "
+                                          + package_preparation_command(args, node))
             if args.command == "deploy":
                 with device_progress.stage("Preparing deployment runtime"):
                     transport.ensure_engine()

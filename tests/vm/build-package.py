@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Exercise the feed install recipe and emit an unsigned VM-only APK.
+"""Exercise the feed install recipe and emit a local acceptance-test APK.
 
 A matching OpenWrt SDK remains the release packaging entry point. This small
 harness uses apk-tools 3 and the exact feed install/script definitions, avoiding
@@ -22,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apk', required=True)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--sign-key', type=Path, help='Optional local signing identity for acceptance packages')
     version = re.sub(r'-(alpha|beta|rc)\.', r'_\1', (ROOT / 'VERSION').read_text().strip()) + '-r1'
     parser.add_argument('--version', default=version)
     args = parser.parse_args()
@@ -76,6 +77,8 @@ fixture:
                 '--info', 'description:Transactional OpenWrt configuration agent',
                 '--info', 'depends:jq uci ubus flock coreutils-timeout', '--files', str(package_root),
                 '--output', str(output)]
+        if args.sign_key:
+            argv += ['--sign-key', str(args.sign_key.resolve())]
         for event, script in [('pre-install', 'preinst'), ('post-install', 'postinst'),
                               ('pre-upgrade', 'preinst'), ('post-upgrade', 'postinst'),
                               ('pre-deinstall', 'prerm')]:

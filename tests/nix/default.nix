@@ -48,6 +48,7 @@ let
   apExample =
     (evaluate [
       (import ../../templates/ap/ap.nix {
+        lib = wrtix.lib;
         targetHost = "root@router.example";
         ssid = "Example Wi-Fi";
         ports = [
@@ -124,6 +125,35 @@ let
     { services.openwrt.fleetModules = [ { devices.alpha.unknown = true; } ]; }
   ];
   checked =
+    let
+      shorthand = wrtix.lib.uci {
+        network.interface.lan = {
+          proto = "dhcp";
+          device = "br-lan";
+        };
+        dhcp.dnsmasq = [ { domainneeded = true; } ];
+      };
+      providerManifest =
+        (evaluate [
+          {
+            services.openwrt = {
+              enable = true;
+              secretProviders.fixture.executable = pkgs.writeShellScript "fixture-secret" "exit 1";
+              devices.router.uci = wrtix.lib.uci {
+                example.section.named.value.secretRef = {
+                  provider = "fixture";
+                  key = "test";
+                };
+              };
+            };
+          }
+        ]).config.services.openwrt.manifest;
+    in
+    assert shorthand.network.lan.type == "interface";
+    assert shorthand.network.lan.options.proto == "dhcp";
+    assert shorthand.dhcp.__anonymous_dnsmasq_0.anonymous;
+    assert providerManifest.devices.router.uci.example.named.options.value.secretRef.key == "test";
+    assert lib.hasPrefix "/nix/store/" providerManifest.secretProviders.fixture.executable;
     assert manifest.devices.alpha.resourceSets.metadata.files."/etc/example-label".text == "first";
     assert manifest.devices.beta.resourceSets.metadata.files."/etc/example-label".text == "second";
     assert

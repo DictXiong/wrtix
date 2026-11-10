@@ -91,7 +91,8 @@ def parse_uci(data):
             anonymous = len(tokens) == 2
             count = counts.get(typ, 0)
             counts[typ] = count + 1
-            name = f"__anonymous_{typ}_{count}" if anonymous else tokens[2]
+            identifier = typ if SECTION.fullmatch(typ) else hashlib.sha256(typ.encode()).hexdigest()
+            name = f"__anonymous_{identifier}_{count}" if anonymous else tokens[2]
             if name in sections:
                 raise CompileError("duplicate generated UCI section")
             current = {"type": typ, "anonymous": anonymous, "order": len(sections), "options": {}}
@@ -437,7 +438,7 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
     refs = {name: SecretResolver.references(node) for name, node in effective.items()}
     if resolve_secrets:
         if resolver is None:
-            resolver = SecretResolver.from_config(manifest.get("decryption", {}))
+            resolver = SecretResolver.from_config(manifest.get("decryption", {}), providers=manifest.get("secretProviders", {}))
             try:
                 nodes = resolver.resolve(effective)
             finally:

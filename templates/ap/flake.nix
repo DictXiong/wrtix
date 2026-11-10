@@ -8,6 +8,7 @@
         pkgs = wrtix.inputs.nixpkgs.legacyPackages.${system};
         modules = [
           (import ./ap.nix {
+            lib = wrtix.lib;
             targetHost = "root@router.example";
             ssid = "Example Wi-Fi";
             passwordFile = ./secrets.yaml;

@@ -12,6 +12,7 @@
     in
     {
       nixosModules.default = import ./nix/nixos.nix;
+      lib.uci = import ./nix/uci.nix { lib = nixpkgs.lib; };
       templates.default = self.templates.ap;
       templates.ap = {
         path = ./templates/ap;
@@ -83,6 +84,7 @@
                 export WRTIX_AGENT_DATA=${self}/agent
                 python3 ${self}/tests/test_controller.py
                 python3 ${self}/tests/test_controller_inherited.py
+                python3 ${self}/tests/test_workflows.py
                 touch "$out"
               '';
           target =

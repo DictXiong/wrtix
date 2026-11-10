@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import stat
+import re
+import signal
 import tempfile
 
 
@@ -16,6 +19,15 @@ class SecretError(ValueError):
 
 
 def reference(value):
+    if isinstance(value, dict) and set(value) == {"secretRef"}:
+        ref = value["secretRef"]
+        if (not isinstance(ref, dict) or set(ref) - {"provider", "key", "input"}
+                or not isinstance(ref.get("provider"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", ref["provider"])
+                or not isinstance(ref.get("key"), str) or not ref["key"] or "\x00" in ref["key"]
+                or not isinstance(ref.get("input", {}), dict)):
+            raise SecretError("invalid secret provider reference")
+        return ref
     if not isinstance(value, dict) or set(value) != {"sops"}:
         return None
     ref = value["sops"]
@@ -41,7 +53,7 @@ def duplicate_free(pairs):
 
 class SecretResolver:
     def __init__(self, runner=subprocess.run, key_file=None, ssh_key_file=None,
-                 ssh_key_files=None, gnupg_home=None, gnupg_ssh_key_files=None):
+                 ssh_key_files=None, gnupg_home=None, gnupg_ssh_key_files=None, providers=None):
         if gnupg_home and gnupg_ssh_key_files:
             raise SecretError("select either GnuPG home or SSH-to-PGP identities")
         self.runner = runner
@@ -51,6 +63,10 @@ class SecretResolver:
         self.gnupg_ssh_key_files = list(dict.fromkeys(gnupg_ssh_key_files or []))
         self.cache = {}
         self.cipher_digests = {}
+        self.providers = {} if providers is None else providers
+        if not isinstance(self.providers, dict):
+            raise SecretError("secret providers must be a named registry")
+        self.provider_cache = {}
 
     @classmethod
     def from_config(cls, identity, **options):
@@ -190,9 +206,42 @@ class SecretResolver:
             if descriptor is not None:
                 os.close(descriptor)
 
+    def _provider_value(self, ref):
+        spec = self.providers.get(ref["provider"])
+        if (not isinstance(spec, dict) or set(spec) - {"executable", "timeoutSeconds"}
+                or not isinstance(spec.get("executable"), str) or not spec["executable"].startswith("/")
+                or type(spec.get("timeoutSeconds", 30)) is not int
+                or not 1 <= spec.get("timeoutSeconds", 30) <= 120):
+            raise SecretError("secret provider is undeclared or invalid")
+        payload = json.dumps({"key": ref["key"], "input": ref.get("input", {})}, sort_keys=True).encode()
+        cache_key = (ref["provider"], payload)
+        if cache_key in self.provider_cache:
+            return self.provider_cache[cache_key]
+        try:
+            with subprocess.Popen([spec["executable"]], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, start_new_session=True) as process:
+                try:
+                    output, _ = process.communicate(payload, timeout=spec.get("timeoutSeconds", 30))
+                except BaseException:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.communicate()
+                    raise
+            if process.returncode or len(output) > 8 * 1024 * 1024:
+                raise SecretError("secret provider failed")
+            result = json.loads(output, object_pairs_hook=duplicate_free)
+            if not isinstance(result, dict) or set(result) != {"value"} or not isinstance(result["value"], str):
+                raise SecretError("secret provider must return one string value")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise SecretError("secret provider failed or returned invalid data") from None
+        self.provider_cache[cache_key] = result["value"]
+        return result["value"]
+
     def resolve(self, value):
         ref = reference(value)
         if ref is not None:
+            if "provider" in ref:
+                return self._provider_value(ref)
             item = self._document(ref)
             for key in ref["key"].split("/"):
                 if not isinstance(item, dict) or key not in item:
@@ -210,3 +259,4 @@ class SecretResolver:
     def close(self):
         self.cache.clear()
         self.cipher_digests.clear()
+        self.provider_cache.clear()

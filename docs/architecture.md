@@ -25,6 +25,7 @@ constraints and the final checks.
 
 The Nix closure contains public configuration and secret references. During
 execution the controller resolves SOPS references using the configured identity,
+or invokes registered secret providers through private stdin/stdout,
 validates final resources, renders exact UCI bytes and constructs a private
 transaction archive. Required compile checks see the final fleet and selected
 resources through private stdin. Their output is suppressed.
@@ -72,6 +73,11 @@ sandbox against malicious administrator-supplied code.
 Package prerequisites are checked, not installed as part of a configuration
 transaction. Package operations are blocked while recovery is pending. Agent
 installation alone leaves the existing network and credentials unchanged.
+The explicit `prepare-packages` phase installs missing prerequisites under a
+separate preparation lock and persistent fence. APK commit hooks retain this
+fence until preparation succeeds. Failed preparation can be retried after its
+processes exit. Runtime identity checks for preparation permit this specific
+fence, while configuration operations continue to reject it.
 Sysupgrade backup includes declared managed state; it does not turn firmware
 upgrades into atomic configuration transactions.
 

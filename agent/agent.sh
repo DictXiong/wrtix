@@ -101,11 +101,14 @@ file_mode() {
 }
 agent_ready() {
  plain "$(p /usr/share/wrtix/contract.json)" && plain "$GUARD" || fail missing_agent_runtime
- [ ! -e "$(p /etc/wrtix/package-operation)" ] || fail package_operation_active
+ if [ -e "$(p /etc/wrtix/package-operation)" ]; then
+  [ "${1:-}" = packages ] && plain "$(p /etc/wrtix/package-operation)" &&
+   [ "$(cat "$(p /etc/wrtix/package-operation)")" = prepare-packages ] || fail package_operation_active
+ fi
 }
 agent_identity() {
  local device_id= board_name= contract=$(p /usr/share/wrtix/contract.json) password=true resolver=true
- agent_ready
+ agent_ready "${1:-}"
  jq -e '.schema_version==1 and .profile=="wrtix-v2"' "$contract" >/dev/null || fail incompatible_agent
  if [ -e "$(p /etc/wrtix/identity.json)" ]; then
   regular_or_absent etc/wrtix/identity.json || fail invalid_identity
@@ -1291,10 +1294,84 @@ verify_installed() (
  printf '{"matches":true}\n'
 )
 
+prepare_packages() (
+ work=$(mktemp -d "$(p /tmp)/wrtix-packages.XXXXXX")
+ trap 'rm -rf "$work"' EXIT
+ head -c 65537 > "$work/request"
+ [ "$(wc -c < "$work/request" | tr -d ' ')" -le 65536 ] || fail request_too_large
+ jq -e 'def alnum: (.>=48 and .<=57) or (.>=65 and .<=90) or (.>=97 and .<=122);
+   type=="array" and length<=256 and all(.[];
+   type=="string" and length>0 and length<=128 and (explode|.[0]|alnum) and
+   (explode|all(.[]; alnum or .==43 or .==95 or .==46 or .==45)))' "$work/request" >/dev/null || fail invalid_packages
+ jq -r '.[]' "$work/request" > "$work/packages"
+ [ ! -L "$(p /etc/wrtix/package-preparation.lock)" ] || fail unsafe_lock
+ exec 8> "$(p /etc/wrtix/package-preparation.lock)"
+ flock -n -x 8 || fail package_preparation_running
+ lock
+ status_json=$(tool status) || fail transaction_status_unavailable
+ printf '%s' "$status_json" | jq -e '.state=="absent" or .state=="rolled-back" or
+   (.state=="confirmed" and .reload_complete==true)' >/dev/null || fail transaction_active
+ [ ! -e "$STATE/restore-pending" ] && [ ! -e "$STATE/rollback-reboot" ] &&
+ [ ! -e "$STATE/rollback-incomplete" ] || fail restoration_pending
+ marker=$(p /etc/wrtix/package-operation)
+ [ ! -e "$marker" ] || { plain "$marker" && [ "$(cat "$marker")" = prepare-packages ]; } || fail package_operation_active
+ for path in /tmp/sysupgrade /tmp/sysupgrade.tgz /tmp/sysupgrade-trigger; do
+  [ ! -e "$(p "$path")" ] || fail firmware_operation_active
+ done
+ if ! $TEST_MODE; then
+  pending=$(uci -q changes) || fail pending_config_check_failed
+  [ -z "$pending" ] || fail pending_uci_changes
+ fi
+ printf 'prepare-packages\n' > "$marker.new.$$"
+ mv "$marker.new.$$" "$marker"
+ owner=$(p /etc/wrtix/package-preparation-owner)
+ [ ! -L "$owner" ] || fail unsafe_lock
+ printf '%s %s %s\n' "$$" "$(awk '{print $22}' /proc/$$/stat)" "$(boot)" > "$owner.new.$$"
+ mv "$owner.new.$$" "$owner"
+ unlock
+ if command -v apk >/dev/null 2>&1; then manager=apk
+ elif command -v opkg >/dev/null 2>&1; then manager=opkg
+ else fail package_manager_unavailable; fi
+ installed() {
+  if [ "$manager" = apk ]; then apk info -e "$1" >/dev/null 2>&1
+  else opkg status "$1" 2>/dev/null | grep -q 'Status:.* installed'; fi
+ }
+ set --
+ while IFS= read -r package; do
+  installed "$package" || set -- "$@" "$package"
+ done < "$work/packages"
+ if [ "$#" -gt 0 ]; then
+  worker=
+  trap '[ -z "$worker" ] || { kill "$worker" 2>/dev/null || :; wait "$worker" 2>/dev/null || :; }; exit 1' HUP INT TERM
+  (
+   if [ "$manager" = apk ]; then
+    apk update || exit 1
+    apk add --simulate "$@" > "$work/plan" 2>&1 || exit 1
+    # Keep the package that owns this executing runtime out of dependency changes.
+    if grep -E '\) (Installing|Upgrading|Downgrading|Reinstalling|Purging) wrtix-agent([ (]|$)' "$work/plan" >/dev/null; then exit 1; fi
+    apk add "$@"
+   else opkg update && opkg install "$@"; fi
+  ) > "$work/install.log" 2>&1 &
+  worker=$!
+  wait "$worker" || fail package_install_failed
+  worker=
+ fi
+ while IFS= read -r package; do installed "$package" || fail package_verification_failed; done < "$work/packages"
+ lock
+ [ "$(cat "$marker")" = prepare-packages ] || fail package_operation_changed
+ rm "$marker"
+ rm "$owner"
+ unlock
+ jq -cn --arg manager "$manager" --slurpfile packages "$work/request" \
+  '{state:"packages-ready",manager:$manager,packages:$packages[0],configuration_rollback:false}'
+)
+
 command=${1:-}
 case "$command" in
  verify) verify_installed;;
  identity) agent_identity;;
+ package-identity) agent_identity packages;;
+ package-prepare) prepare_packages;;
  package-idle) lock; if active || [ -f "$STATE/restore-pending" ] || [ -e "$STATE/rollback-reboot" ]; then fail transaction_active; fi; unlock;;
  check)
   work=$(mktemp "$(p /tmp)/openwrt-check-request.XXXXXX")

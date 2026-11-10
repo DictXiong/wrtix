@@ -23,13 +23,13 @@ in
     packages = mkOption {
       type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9+_.-]*");
       default = [ ];
-      description = "Required installed packages; the configuration transaction does not install or upgrade them.";
+      description = "Required packages. prepare-packages installs missing prerequisites independently before the configuration transaction.";
     };
     users.root = {
       passwordHash = mkOption {
         type = types.nullOr t.secret;
         default = null;
-        description = "Runtime SOPS reference to a crypt password hash; null preserves the current password.";
+        description = "Runtime secret reference to a crypt password hash; null preserves the current password.";
       };
       authorizedKeys = mkOption {
         type = types.nullOr (types.listOf types.str);

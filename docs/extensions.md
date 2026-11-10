@@ -80,3 +80,18 @@ trusted administrative code, so this interface is not an adversarial sandbox.
 AP-specific relationships (MAC/MLD/BSSID, SSID security, capacity, roaming and
 hardware acceleration) belong in an external profile and its required checks.
 A routing or VPN profile can use the same interface without importing AP code.
+
+## Runtime secret providers
+
+Register controller executables under `services.openwrt.secretProviders` and
+reference them with `{ secretRef = { provider = "name"; key = "lookup"; }; }`.
+The same reference works in UCI values, structured files, root password hashes
+and check input. Providers receive public lookup input on stdin and return a
+single private string in a JSON `value` field. See the [provider example](usage.md#other-secret-sources).
+
+Provider programs are trusted administrative code. Ship executable logic as a
+Nix artifact and obtain credentials at runtime. Build and preview perform no
+lookup. One invocation resolves each provider/key/input combination once before
+resource validation. A missing provider, invalid response or timeout prevents
+deployment. Stderr and invalid output stay out of logs, and timeout cleanup
+terminates the provider process group.

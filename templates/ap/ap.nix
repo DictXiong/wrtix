@@ -1,5 +1,6 @@
 # Plain, complete UCI resources for a simple 2.4 GHz mac80211 access point.
 {
+  lib,
   targetHost,
   ssid,
   passwordFile,
@@ -13,58 +14,43 @@
     devices.router = {
       target_host = targetHost;
       resolver.target = "/tmp/resolv.conf.d/resolv.conf.auto";
-      uci = {
+      uci = lib.uci {
         network = {
-          loopback = {
-            type = "interface";
-            options = {
-              device = "lo";
-              proto = "static";
-              ipaddr = "127.0.0.1";
-              netmask = "255.0.0.0";
-            };
+          interface.loopback = {
+            device = "lo";
+            proto = "static";
+            ipaddr = "127.0.0.1";
+            netmask = "255.0.0.0";
           };
-          bridge = {
-            type = "device";
-            options = {
-              name = "br-lan";
-              type = "bridge";
-              inherit ports;
-            };
+          device.bridge = {
+            name = "br-lan";
+            type = "bridge";
+            inherit ports;
           };
-          lan = {
-            type = "interface";
-            options = {
-              device = "br-lan";
-              proto = "dhcp";
-            };
+          interface.lan = {
+            device = "br-lan";
+            proto = "dhcp";
           };
         };
         wireless = {
-          radio0 = {
-            type = "wifi-device";
-            options = {
-              type = "mac80211";
-              inherit phy country;
-              band = "2g";
-              channel = "auto";
-              htmode = "HT20";
-              disabled = "0";
-            };
+          wifi-device.radio0 = {
+            type = "mac80211";
+            inherit phy country;
+            band = "2g";
+            channel = "auto";
+            htmode = "HT20";
+            disabled = false;
           };
-          ap = {
-            type = "wifi-iface";
-            options = {
-              device = "radio0";
-              network = "lan";
-              mode = "ap";
-              inherit ssid;
-              disabled = "0";
-              encryption = "psk2";
-              key.sops = {
-                file = passwordFile;
-                key = "wifi_password";
-              };
+          wifi-iface.ap = {
+            device = "radio0";
+            network = "lan";
+            mode = "ap";
+            inherit ssid;
+            disabled = false;
+            encryption = "psk2";
+            key.sops = {
+              file = passwordFile;
+              key = "wifi_password";
             };
           };
         };

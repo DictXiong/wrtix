@@ -43,6 +43,114 @@ wireless configuration using ordinary resources, without a custom validator.
 
 ## Build and deploy
 
+### Concise UCI declarations
+
+`wrtix.lib.uci` accepts `package.type.name = options` and converts it to the same
+typed resources used by profiles and explicit section definitions. Lists under a
+type declare ordered anonymous sections. These declarations own each complete
+UCI package file, so include all sections that should be present.
+
+```nix
+services.openwrt.devices.router = {
+  target_host = "root@router.example";
+  uci = wrtix.lib.uci {
+    system.system = [ { hostname = "example-router"; timezone = "UTC"; } ];
+  };
+  services.system.reloadOn.uci = [ "system" ];
+};
+```
+
+Use the explicit section form when you need to control ordering across different
+section types. A duplicate named section across types is rejected. The AP
+template uses this helper and provides complete network and wireless settings.
+
+### Start from an existing router
+
+Run this on the controller with existing SSH access. Capture works before
+installing the agent. Values are written literally into the generated Nix module
+by default. Select sensitive fields for encryption before building or committing
+a captured configuration containing credentials.
+
+```sh
+openwrt-rebuild import --target-host root@router.example \
+  --output ./imported-router
+cd imported-router
+nix run . -- build --flake .#imported
+nix run . -- dry-run --flake .#imported --device router
+```
+
+The new directory is a complete standalone Nix flake project containing
+`flake.nix` and `configuration.nix`. The latter is a reusable Nix module declaring
+`services.openwrt` and the captured device. Add it to `modules` or `imports` when
+incorporating the device into an existing project. The command refuses an
+existing destination and pending unsaved UCI changes. It reads committed UCI
+files and enabled matching init services.
+Named/anonymous sections, lists and order are retained. Review service reloads,
+hardware settings and the SSH endpoint before first enrollment. Declare extra
+files, package requirements and root authentication explicitly when taking
+ownership. Generated runtime files are outside this capture.
+
+Repeat `--uci network --uci wireless` to capture selected packages. Import keeps
+the original SSH port. `--device NAME` sets the enrollment identifier. Use
+`--system aarch64-linux` for an ARM controller. Repeat `--secret-option` to
+encrypt selected scalar or list options. Encryption requires `--sops-age` and
+creates `secrets.yaml` containing only the selected values. Other options stay
+readable in `configuration.nix`.
+
+```sh
+openwrt-rebuild import --target-host root@router.example --output ./imported-router \
+  --secret-option wireless.default_radio0.key \
+  --secret-option wireless.default_radio1.key \
+  --sops-age age1YOUR_PUBLIC_RECIPIENT
+```
+
+Use the actual package, section and option names from the device. A selector
+that matches no captured option is an error. Import without selections requires
+no SOPS setup and produces only the two Nix files.
+Multi-line UCI values are rejected because the resource renderer cannot
+represent them. A failed encryption leaves no output project.
+For development, `--wrtix-input path:/path/to/wrtix` selects a local checkout for
+the generated project. Pair its controller with the matching agent contract.
+
+Keep the generated lock file. Add reviewed Nix files and any encrypted YAML to
+Git when using a Git-backed flake, and keep the age identity outside the
+repository. Install the matching agent, then enroll through the normal
+protected workflow.
+
+```sh
+nix run . -- switch --flake .#imported --device router \
+  --init --target-host root@router.example
+```
+
+### Prepare required software
+
+Declare prerequisites with `packages = [ "tcpdump" "iperf3" ];` and run the
+explicit preparation step before deploying configurations that need them.
+
+```sh
+openwrt-rebuild prepare-packages --flake .#site --device router
+openwrt-rebuild switch --flake .#site --device router
+```
+
+Preparation requires a matching agent and an idle configuration transaction. It
+updates repository indexes and installs missing packages through APK or opkg.
+Already installed packages are skipped. Package-manager operations can run
+package scripts and alter persistent state, so they sit outside configuration
+rollback. The command reports this boundary in progress and structured output.
+It adds prerequisites and retains other installed packages.
+
+A persistent preparation fence blocks configuration staging during installation.
+APK hooks cooperate with this fence and reject replacement/removal of the agent.
+An interrupted or failed preparation retains the fence. Retry the same command
+to recheck the package state and clear it after success. A second preparation
+cannot run concurrently. Normal `switch`, `test` and `verify` report missing
+package names and stop before configuration mutation. The error includes a
+copyable preparation command using the matching controller, built manifest,
+device and SSH overrides. Run it, then retry the original deployment command.
+
+Preparation uses public configuration and never resolves deployment secrets.
+Agent installation and upgrade are explicit prerequisites to this workflow.
+
 ```sh
 openwrt-rebuild build --flake .#openwrtConfigurations.site
 openwrt-rebuild dry-run --flake .#openwrtConfigurations.site --device router
@@ -96,6 +204,41 @@ That value must be a crypt password hash, not a plaintext login password. For
 third-party JSON or YAML files, put references inside `files.<path>.value` and
 select `format = "json"` or `"yaml"`. Use restrictive file modes for secrets.
 The same encrypted source and key may be referenced by multiple devices.
+
+### Other secret sources
+
+Register a trusted controller program and use `secretRef` wherever a runtime
+secret is accepted. The program is an immutable Nix artifact. This example reads
+from a password store through its normal runtime authentication.
+
+```nix
+services.openwrt = {
+  secretProviders.passwordStore = {
+    executable = pkgs.writeShellScript "wrtix-password-store" ''
+      set -eu
+      request=$(${pkgs.coreutils}/bin/cat)
+      key=$(printf '%s' "$request" | ${pkgs.jq}/bin/jq -er '.key')
+      ${pkgs.pass}/bin/pass show "$key" | ${pkgs.jq}/bin/jq -Rs '{value: .}'
+    '';
+    timeoutSeconds = 30;
+  };
+  devices.router.files."/etc/application-token" = {
+    mode = "0600";
+    value.secretRef = { provider = "passwordStore"; key = "router/application-token"; };
+  };
+};
+```
+
+Providers receive a JSON object `{ "key": "...", "input": {} }` on stdin and
+return exactly `{ "value": "a string" }` on stdout. Whitespace is preserved.
+Use `input` for public lookup parameters. Credentials belong to the program's
+runtime authentication environment. Provider output and stderr are suppressed
+from deployment logs. Timeouts terminate the provider process group. Results are
+cached per provider, key and input for one invocation, then discarded.
+
+Build and preview only inspect references. Actual deployment resolves them and
+runs the same final resource and extension checks as SOPS values. Ordinary
+configuration requires no custom provider or validator.
 
 ### Changing the SSH port
 

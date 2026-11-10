@@ -16,9 +16,26 @@ flock -x 9
 [ ! -L "$marker" ] || fail unsafe_package_marker
 # Other coordinated lifecycle operations may fence configuration staging.
 # Package hooks must not erase such a fence, even if no transaction is active.
+preparing_packages=false
 if [ -e "$marker" ]; then
  [ -f "$marker" ] || fail unsafe_package_marker
- case "$(cat "$marker")" in commit|prepare-install|prepare-remove) :;; *) fail foreign_operation_pending;; esac
+ case "$(cat "$marker")" in
+  commit|prepare-install|prepare-remove) :;;
+  prepare-packages)
+   owner=$root/package-preparation-owner
+   [ -f "$owner" ] && [ ! -L "$owner" ] || fail package_preparation_not_owned
+   read -r owner_pid owner_ticks owner_boot extra < "$owner" || fail package_preparation_not_owned
+   case "$owner_pid:$owner_ticks" in *[!0-9:]*|:*|*:) fail package_preparation_not_owned;; esac
+   [ -z "$extra" ] && [ "$owner_boot" = "$(cat /proc/sys/kernel/random/boot_id)" ] &&
+    [ -r "/proc/$owner_pid/stat" ] && [ "$(awk '{print $22}' "/proc/$owner_pid/stat")" = "$owner_ticks" ] || fail package_preparation_not_owned
+   ancestor=$(awk '{print $4}' /proc/$$/stat)
+   while [ "$ancestor" != "$owner_pid" ] && [ "$ancestor" -gt 1 ]; do
+    ancestor=$(awk '{print $4}' "/proc/$ancestor/stat") || fail package_preparation_not_owned
+   done
+   [ "$ancestor" = "$owner_pid" ] || fail package_preparation_not_owned
+   case "${1:-}" in prepare-commit|finish-commit) preparing_packages=true;; *) fail foreign_operation_pending;; esac;;
+  *) fail foreign_operation_pending;;
+ esac
 fi
 idle() {
  local status
@@ -48,8 +65,10 @@ case "${1:-}" in
   apk_ticks=$(awk '{print $22}' "/proc/$apk_pid/stat")
   printf '%s %s %s\n' "$apk_pid" "$apk_ticks" "$(cat /proc/sys/kernel/random/boot_id)" > "$commit.new.$$"
   mv "$commit.new.$$" "$commit"
-  printf 'commit\n' > "$marker.new.$$"
-  mv "$marker.new.$$" "$marker"
+  if ! $preparing_packages; then
+   printf 'commit\n' > "$marker.new.$$"
+   mv "$marker.new.$$" "$marker"
+  fi
   ;;
  prepare-install|prepare-remove)
   idle
@@ -75,6 +94,11 @@ case "${1:-}" in
    $2=="usr/share/wrtix/contract.json" {c++;next}
    {exit 1} END {if(a!=1 || b!=1 || c!=1) exit 1}' /usr/share/wrtix/runtime.sha256 || fail invalid_runtime_inventory
   (cd /; sha256sum -c /usr/share/wrtix/runtime.sha256 >/dev/null) || fail runtime_hash_mismatch
+  if $preparing_packages; then
+   idle
+   rm -f "$commit"
+   exit 0
+  fi
   cp -p "$marker" "$marker.saved.$$"
   trap '[ ! -f "$marker.saved.$$" ] || mv "$marker.saved.$$" "$marker"' EXIT HUP INT TERM
   rm "$marker"

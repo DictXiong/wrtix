@@ -8,6 +8,12 @@ resolution and an OpenWrt target package. It does not prescribe a router topolog
 wireless policy, management subnet or initial credentials. It can manage a device
 without wireless, a bridge or custom MAC addresses.
 
+Existing routers can be captured with `openwrt-rebuild import`. The generated
+project contains readable UCI values, with optional encryption for selected
+fields. Review it before deployment. `prepare-packages` installs missing prerequisites as an independent
+step. See [usage](docs/usage.md) for capture, concise UCI configuration and secret
+provider examples.
+
 ## Quick start: a wired Wi-Fi access point
 
 This example turns a standard OpenWrt LAN into a single-radio AP. The upstream
@@ -32,6 +38,7 @@ Edit the small settings block in the generated `flake.nix`:
 
 ```nix
 (import ./ap.nix {
+  lib = wrtix.lib;
   targetHost = "root@router.example";
   ssid = "Example Wi-Fi";
   passwordFile = ./secrets.yaml;

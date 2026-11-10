@@ -103,6 +103,76 @@ esac
     def check(self, paths, services=()):
         return self.run_engine("check", data=json.dumps({"paths": list(paths), "services": list(services)}).encode())
 
+    def test_package_preparation_installs_missing_only_and_retries_after_failure(self):
+        tools = self.root / "package-tools"
+        tools.mkdir()
+        installed = self.put("run/installed-packages", b"existing\n")
+        failure = self.root / "run/package-failure"
+        script = f'''#!/bin/sh
+case "$1" in
+ update) exit 0;;
+ info) grep -Fxq "$3" {shlex.quote(str(installed))};;
+ add)
+  shift
+  [ "${1:-}" != --simulate ] || exit 0
+  printf '%s\\n' "$@" >> {shlex.quote(str(self.root / 'run/package-actions'))}
+  [ ! -f {shlex.quote(str(failure))} ] || exit 1
+  printf '%s\\n' "$@" >> {shlex.quote(str(installed))};;
+ *) exit 1;;
+esac
+'''
+        self.put("package-tools/apk", script.encode(), 0o755)
+        self.engine_env["PATH"] = str(tools) + os.pathsep + self.engine_env["PATH"]
+        failure.touch()
+        request = json.dumps(["existing", "new-package"]).encode()
+        self.assertIn(b"package_install_failed", self.run_engine("package-prepare", data=request, ok=False).stderr)
+        marker = self.root / "etc/wrtix/package-operation"
+        self.assertEqual(marker.read_text().strip(), "prepare-packages")
+        self.assertIn(b"package_operation_active", self.run_engine("identity", ok=False).stderr)
+        self.run_engine("package-identity")
+        failure.unlink()
+        result = self.run_engine("package-prepare", data=request)
+        self.assertEqual(result["state"], "packages-ready")
+        self.assertFalse(marker.exists())
+        self.assertEqual((self.root / "run/package-actions").read_text(), "new-package\nnew-package\n")
+        self.run_engine("package-prepare", data=request)
+        self.assertEqual((self.root / "run/package-actions").read_text(), "new-package\nnew-package\n")
+
+    def test_package_preparation_rejects_pending_transaction_and_invalid_names(self):
+        for package in ("-bad", "bad;command", "bad/name", ""):
+            self.run_engine("package-prepare", data=json.dumps([package]).encode(), ok=False)
+        token, archive, _ = self.bundle({"etc/example": (b"candidate", "600")})
+        self.run_engine("stage", data=archive)
+        result = self.run_engine("package-prepare", data=b'[]', ok=False)
+        self.assertIn(b"transaction_active", result.stderr)
+        self.assertFalse((self.root / "etc/wrtix/package-operation").exists())
+
+    def test_opkg_preparation_skips_existing_packages(self):
+        if shutil.which("apk", path=self.engine_env["PATH"]):
+            self.skipTest("opkg fixture requires a host without APK")
+        tools = self.root / "opkg-tools"
+        tools.mkdir()
+        installed = self.put("run/opkg-installed", b"existing\n")
+        script = f'''#!/bin/sh
+case "$1" in
+ status)
+  grep -Fxq "$2" {shlex.quote(str(installed))} || exit 1
+  printf 'Status: install ok installed\\n';;
+ update) exit 0;;
+ install)
+  shift
+  printf '%s\\n' "$@" >> {shlex.quote(str(installed))};;
+ *) exit 1;;
+esac
+'''
+        self.put("opkg-tools/opkg", script.encode(), 0o755)
+        self.engine_env["PATH"] = str(tools) + os.pathsep + self.engine_env["PATH"]
+        request = b'["existing","new-package"]'
+        result = self.run_engine("package-prepare", data=request)
+        self.assertEqual(result["manager"], "opkg")
+        self.run_engine("package-prepare", data=request)
+        self.assertEqual(installed.read_text(), "existing\nnew-package\n")
+
     def bundle(self, files, services=None, baseline=None, extra=None, symlink=False, managed_services=None, initialize=False, resolver_target=None):
         files = {"etc/wrtix/identity.json": (json.dumps(self.identity).encode(), "600"), **files}
         services = services or {}

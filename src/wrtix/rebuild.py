@@ -16,7 +16,7 @@ from progress import Progress
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_FLAKE = Path("/etc/nixos/flake.nix")
-ACTIONS = ("build", "dry-run", "test", "switch", "verify", "status", "confirm", "rollback", "receipts", "clean")
+ACTIONS = ("build", "import", "prepare-packages", "dry-run", "test", "switch", "verify", "status", "confirm", "rollback", "receipts", "clean")
 CONNECTION = ("target_host", "post_switch_host", "post_switch_port", "port", "control_socket", "jump_host", "known_hosts")
 
 
@@ -62,11 +62,36 @@ def parse_args(argv=None):
     parser.add_argument("--remote", action="store_true", help="Also check remote identity during dry-run")
     parser.add_argument("--initialize", "--init", dest="initialize", action="store_true",
                         help="Allow first provisioning of one explicitly selected, unenrolled device")
+    parser.add_argument("--output", help="New directory for an imported configuration project")
+    parser.add_argument("--uci", action="append", help="Import only this UCI package; repeat to select several")
+    parser.add_argument("--secret-option", action="append", metavar="PACKAGE.SECTION.OPTION",
+                        help="Encrypt this imported option with SOPS; repeat to select several fields")
+    parser.add_argument("--sops-age", action="append", help="Public age recipient for imported configuration; repeat for multiple recipients")
+    parser.add_argument("--wrtix-input", default="github:DictXiong/wrtix", help="wrtix flake input for import")
+    parser.add_argument("--system", choices=("x86_64-linux", "aarch64-linux"), default="x86_64-linux",
+                        help="Controller platform for an imported project")
     args = parser.parse_args(argv)
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.post_switch_port is not None and not 1 <= args.post_switch_port <= 65535:
         parser.error("--post-switch-port must be between 1 and 65535")
+    if args.action == "import":
+        if not args.target_host or not args.output:
+            parser.error("import requires --target-host and --output")
+        if args.secret_option and not args.sops_age:
+            parser.error("--secret-option requires --sops-age")
+        if args.sops_age and not args.secret_option:
+            parser.error("--sops-age requires at least one --secret-option")
+        if (args.all or args.receipt or args.initialize or args.remote or args.ttl or args.wait
+                or args.post_switch_host or args.post_switch_port or args.ask_post_switch_host
+                or args.flake is not None or args.offline or args.out_link or args.print_build_logs
+                or args.older_than is not None):
+            parser.error("import accepts one read-only SSH target and capture options")
+        args.device = args.device or "router"
+        return args, False
+    if (args.output or args.uci or args.secret_option or args.sops_age
+            or args.wrtix_input != "github:DictXiong/wrtix" or args.system != "x86_64-linux"):
+        parser.error("capture options require import")
     if args.older_than is not None and (args.action != "clean" or args.older_than < 0):
         parser.error("--older-than requires clean and a nonnegative number of days")
     if args.action in ("receipts", "clean"):
@@ -231,6 +256,10 @@ def controller_args(args, action):
 def main(argv=None):
     args, receipt_mode = parse_args(argv)
     progress = Progress("openwrt-rebuild", args.quiet)
+    if args.action == "import":
+        from intake import run
+        run(args, progress)
+        return
     if args.action in ("receipts", "clean"):
         progress.message("Listing locally stored receipts" if args.action == "receipts" else "Cleaning completed local receipts")
         os.execv(sys.executable, [sys.executable, str(HERE / "openwrt.py"), *controller_args(args, args.action)])

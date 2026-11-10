@@ -4,27 +4,44 @@ let
   inherit (lib) types mkOption;
   nonempty = types.strMatching ".+";
   token = types.strMatching "[A-Za-z0-9_]+";
-  secret = types.submodule (
-    { config, ... }: {
-      options.sops = {
-        file = mkOption {
-          type = types.path;
-          description = "Encrypted SOPS source; never a decrypted secret file.";
-        };
-        key = mkOption {
-          type = types.strMatching "[^/]+(/[^/]+)*";
-          description = "SOPS slash-separated key path, as a string.";
-        };
-        format = mkOption {
-          type = types.enum [
-            "yaml"
-            "json"
-          ];
-          default = if lib.hasSuffix ".json" (toString config.sops.file) then "json" else "yaml";
+  secret = types.attrTag {
+    sops = mkOption {
+      type = types.submodule (
+        { config, ... }: {
+          options = {
+            file = mkOption {
+              type = types.path;
+              description = "Encrypted SOPS source; never a decrypted secret file.";
+            };
+            key = mkOption {
+              type = types.strMatching "[^/]+(/[^/]+)*";
+              description = "SOPS slash-separated key path, as a string.";
+            };
+            format = mkOption {
+              type = types.enum [
+                "yaml"
+                "json"
+              ];
+              default = if lib.hasSuffix ".json" (toString config.file) then "json" else "yaml";
+            };
+          };
+        }
+      );
+    };
+    secretRef = mkOption {
+      type = types.submodule {
+        options = {
+          provider = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*"; };
+          key = mkOption { type = nonempty; };
+          input = mkOption {
+            type = types.attrs;
+            default = { };
+            description = "Public lookup parameters sent to the provider on stdin.";
+          };
         };
       };
-    }
-  );
+    };
+  };
   scalar = types.oneOf [
     types.str
     types.int
