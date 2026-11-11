@@ -198,6 +198,8 @@ class DiffAgentTests(unittest.TestCase):
         self.assertEqual((state / "lease").read_bytes(), lease)
 
     def test_read_only_snapshot_has_no_plaintext_or_secret_derived_bytes(self):
+        # OpenWrt jq can be built without the Oniguruma regex library.
+        self.target.fault_tool("jq", needle=("gsub(", "match(", "test("))
         self.target.put("etc/example", b"old\n")
         self.target.put("etc/token", b"private-value")
         response = self.request(["etc/example", "etc/token"], ["etc/token"])

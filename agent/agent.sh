@@ -349,7 +349,7 @@ diff_snapshot() (
    # Hash the displayed bytes too; never print a stale/mixed snapshot.
    base64 -d < "$diff_work/encoded" > "$diff_work/decoded" || fail diff_content_unavailable
    [ "$(sha "$diff_work/decoded")" = "$expected" ] || fail diff_snapshot_changed
-   jq -Rs --arg p "$rel" '{key:$p,value:(gsub("\n";""))}' < "$diff_work/encoded" >> "$diff_work/$side-rows"
+   jq -Rs --arg p "$rel" '{key:$p,value:(split("\n")|join(""))}' < "$diff_work/encoded" >> "$diff_work/$side-rows"
   done < "$diff_work/$side-paths"
   jq -s from_entries "$diff_work/$side-rows" > "$diff_work/$side-contents"
  done
