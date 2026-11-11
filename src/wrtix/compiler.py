@@ -137,6 +137,20 @@ def placeholder(value):
     return value
 
 
+def secret_paths(node):
+    """Track resource provenance without interpreting credential option names."""
+    paths = set()
+    for source in [node, *node.get("resourceSets", {}).values()]:
+        for packages in (source.get("uci", {}), source.get("overrides", {}).get("uci", {})):
+            for package, sections in packages.items():
+                if SecretResolver.references(sections):
+                    paths.add("etc/config/" + package)
+        for path, spec in source.get("files", {}).items():
+            if SecretResolver.references(spec):
+                paths.add(path.lstrip("/"))
+    return paths
+
+
 
 def protected(ownership, package, option):
     return (package in ownership.get("protectedPackages", [])
@@ -497,7 +511,11 @@ def compile_fleet(manifest, resolve_secrets=False, resolver=None):
         boards = expected.get("board_names", [])
         if not isinstance(boards, list) or any(not isinstance(b, str) or not re.fullmatch(r"[A-Za-z0-9_,.+-]+", b) for b in boards):
             raise CompileError("invalid expected board names")
+        sensitive = secret_paths(effective[name])
+        if hash_ is not None:
+            sensitive.add("etc/wrtix/root-password-hash")
         result[name] = {**resources, "packages": packages,
+                       "sensitive_paths": sorted(sensitive),
                        "root_password_managed": hash_ is not None,
                        "identity": {"device_id": name, "board_names": boards},
                        "contract_sha256": contract_hash, "resolver_target": target,

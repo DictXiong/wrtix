@@ -15,7 +15,7 @@ define Package/wrtix-agent
   SECTION:=admin
   CATEGORY:=Administration
   TITLE:=Transactional declarative OpenWrt configuration agent
-  DEPENDS:=+jq +uci +ubus +flock +coreutils-timeout
+  DEPENDS:=+jq +uci +ubus +flock +coreutils-timeout +coreutils-base64
 endef
 
 define Package/wrtix-agent/description

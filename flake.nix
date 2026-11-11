@@ -107,6 +107,7 @@
                 export PYTHONDONTWRITEBYTECODE=1
                 python3 ${self}/tests/test_target.py
                 python3 ${self}/tests/test_controller_agent.py
+                python3 ${self}/tests/test_diff.py
                 touch "$out"
               '';
           backup =

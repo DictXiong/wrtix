@@ -172,6 +172,55 @@ For a DHCP address change, pass `--post-switch-host` when known, or
 still active while waiting for input. The tool verifies the transaction identity
 at the new endpoint; an arbitrary responding host is not sufficient.
 
+### Inspecting configuration differences
+
+Use `--diff` to print a human-readable comparison on **stderr**. Standard output
+keeps the existing JSON result and exit behavior: `verify` fails on differences,
+while `dry-run --remote` succeeds when its read-only preview completes.
+
+```sh
+openwrt-rebuild verify --device router --diff
+openwrt-rebuild dry-run --remote --device router --diff
+openwrt-rebuild test --device router --diff
+openwrt-rebuild switch --device router --diff
+openwrt-rebuild confirm --receipt /path/to/receipt.json --diff
+openwrt-rebuild switch --receipt /path/to/receipt.json --diff
+openwrt-rebuild rollback --receipt /path/to/receipt.json --diff
+```
+
+Supply `--flake` as usual if you are not using the default configuration.
+The underlying `openwrt-deploy` accepts the same flag on `verify`, `plan --remote`,
+`deploy`, `confirm --receipt` and `rollback --receipt`.
+
+For `test` and normal `switch`, the preview uses the same hash/mode snapshot as
+the transaction baseline and is printed before staging or applying configuration.
+A concurrent edit still causes staging to fail. `--diff` does not add an approval
+prompt or extend the rollback deadline. Explicit receipt confirmation compares
+against the saved candidate; rollback compares against the original backup.
+Neither evaluates the current flake or decrypts its secrets. Cancelling a staged,
+unapplied transaction has no configuration changes to display. Confirmation still
+requires all existing readback, identity, deadline and extension checks.
+
+The comparison shows file content, creation/deletion and mode changes, requested
+service states, resolver symlink changes and root-password synchronization.
+Binary changes have a summary; text diffs are limited to 2,000 lines per file.
+There is no diff for an offline `dry-run`, `build` or `status`. `--quiet` hides
+progress, but keeps explicitly requested diffs. `--diff` requires an updated
+`wrtix-agent`; older installed agents continue to support operations without it.
+The controller never replaces a package-owned agent to enable this feature.
+
+Files derived from SOPS or provider references are hidden in their entirety,
+including their old content. The provenance is saved in transaction metadata and
+the managed-resource ledger, so receipt recovery and later deployments retain it.
+Root credential resources are always private. There is no password-name heuristic:
+literal credentials and secret data never declared through a reference cannot be
+identified reliably and **may appear in a diff**. Use runtime secret references.
+Old transaction journals without provenance hide file content conservatively;
+released files without provenance are also hidden. A live `dry-run --remote --diff`
+resolves runtime secrets to compare the actual target, unlike ordinary
+`dry-run`; its JSON reports `secret_values_compared: true`. Secret values and file
+contents are never added to stdout, receipts or public build products.
+
 ## Secrets and recovery
 
 Secrets are runtime SOPS references, never literal passwords in Nix expressions.

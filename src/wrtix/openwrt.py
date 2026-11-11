@@ -29,6 +29,7 @@ from secret_refs import SecretError, SecretResolver, duplicate_free
 from progress import Progress
 from receipts import ReceiptError, allocate_receipt, clean_receipts, default_directory, list_receipts, receipt_lock
 from packages import missing_packages
+from config_diff import DiffError, decode_contents, show_diff
 
 HERE = Path(__file__).resolve().parent
 REBOOT_INPUT_SECONDS = 150
@@ -147,6 +148,7 @@ resume_workspace_failed no_reboot_to_resume post_reboot_readback_failed reboot_r
 wireless_mac_check_failed wireless_mac_config_invalid
 agent_check_failed invalid_checks check_unavailable preflight_check_failed preconfirm_check_failed postrollback_check_failed
 invalid_packages package_preparation_running package_manager_unavailable package_install_failed
+diff_content_unavailable diff_snapshot_changed
 package_verification_failed package_operation_changed package_operation_active restoration_pending
 transaction_status_unavailable
 package_preparation_not_owned
@@ -395,12 +397,17 @@ class Transport:
         return proc.stdout
 
     def call(self, action, token=None, data=None):
-        if action not in {"check", "verify", "stage", "apply", "status", "confirm", "rollback", "reboot", "resume", "package-prepare"}:
+        if action not in {"check", "diff", "verify", "stage", "apply", "status", "confirm", "rollback", "reboot", "resume", "package-prepare"}:
             raise DeployError("invalid transaction command")
         if token is not None and not re.fullmatch(r"[0-9a-f]{32}", token):
             raise DeployError("invalid receipt token")
-        result = self._run_stage(action, shlex.join(["sh", REMOTE, action] + ([] if token is None else [token])),
-                                 data=data, timeout=1800 if action == "package-prepare" else 60)
+        try:
+            result = self._run_stage(action, shlex.join(["sh", REMOTE, action] + ([] if token is None else [token])),
+                                     data=data, timeout=1800 if action == "package-prepare" else 60)
+        except DeployError as error:
+            if action == "diff" and "invalid_command" in str(error):
+                raise DeployError("--diff requires an updated wrtix-agent package; no configuration was changed") from None
+            raise
         try:
             return json.loads(result)
         except ValueError:
@@ -478,10 +485,12 @@ def pending_bundle(compiled, baseline, node, ttl, old, initialize=False):
     for index, (path, data) in enumerate(sorted(compiled["files"].items())):
         item = "payload/" + str(index)
         files.append({"path": path, "mode": compiled["modes"][path], "sha256": digest(data),
-                      "size": len(data), "payload": item, "delete": False})
+                      "size": len(data), "payload": item, "delete": False,
+                      "sensitive": path in compiled.get("sensitive_paths", []) or path in old.get("sensitive_paths", [])})
         payload[item] = data
     for path in sorted(set(old.get("files", [])) - set(compiled["files"]) - set(compiled.get("preserve_paths", []))):
-        files.append({"path": path, "mode": None, "sha256": None, "size": 0, "payload": None, "delete": True})
+        files.append({"path": path, "mode": None, "sha256": None, "size": 0, "payload": None, "delete": True,
+                      "sensitive": path in old.get("sensitive_paths", old.get("files", []))})
     services = {name: dict(spec) for name, spec in compiled["services"].items()}
     for name in set(old.get("services", [])) - set(services):
         services[name] = {"enable": False, "running": False, "action": "reload"}
@@ -515,6 +524,40 @@ def pending_bundle(compiled, baseline, node, ttl, old, initialize=False):
 
 def managed_paths(compiled, old):
     return sorted(set(compiled["files"]) | (set(old.get("files", [])) - set(compiled.get("preserve_paths", []))))
+
+
+def configuration_diff(transport, request, compiled, old, node):
+    opaque = set(compiled.get("sensitive_paths", [])) | set(old.get("sensitive_paths", []))
+    # A released file from an older ledger has no reliable secret provenance.
+    opaque.update(set(old.get("files", [])) - set(compiled["files"]))
+    response = transport.call("diff", data=canonical({**request, "opaque_paths": sorted(opaque & set(request["paths"]))}))
+    baseline = response["current"]
+    target = {"files": {path: digest(data) for path, data in compiled["files"].items()},
+              "modes": dict(compiled["modes"]), "services": {}}
+    for path in set(request["paths"]) - set(compiled["files"]):
+        target["files"][path] = target["modes"][path] = None
+    for name in request["services"]:
+        spec = compiled["services"].get(name, {"enable": False, "running": False})
+        # Missing disabled services already satisfy the deployment contract.
+        if not baseline.get("services", {}).get(name, {}).get("present") and not spec["enable"]:
+            continue
+        target["services"][name] = {"enabled": spec["enable"], "running": spec.get("running")}
+    if compiled.get("resolver_target") is not None:
+        target["resolver_state"] = {"type": "symlink", "target": compiled["resolver_target"]}
+    show_diff(node, baseline, target, decode_contents(baseline, response["contents"]), compiled["files"],
+              opaque=opaque | set(response["opaque_paths"]),
+              root_sync=compiled.get("root_password_managed") and baseline.get("agent", {}).get("root_password_synced") is not True)
+    return baseline
+
+
+def transaction_diff(transport, receipt, action):
+    side = "backup" if action == "rollback" else "candidate"
+    response = transport.call("diff", receipt["token"], data=canonical({"target": side}))
+    baseline, target = response["current"], response["target"]
+    show_diff(receipt["device_id"], baseline, target,
+              decode_contents(baseline, response["contents"]), decode_contents(target, response["target_contents"]),
+              opaque=response["opaque_paths"], label="rollback baseline" if side == "backup" else "pending target",
+              root_sync=target.get("root_password_managed") and baseline.get("agent", {}).get("root_password_synced") is not True)
 
 
 def changed_files(compiled, baseline, old):
@@ -1004,10 +1047,11 @@ def main(argv=None):
         child.add_argument("--initialize", "--init", action="store_true",
                            help="Allow first enrollment of one verified uninitialized device")
         child.add_argument("--quiet", "-q", action="store_true", help="Hide progress messages; errors remain visible")
+        child.add_argument("--diff", action="store_true", help="Show configuration differences on stderr, without changing JSON output")
         child.add_argument("--receipt")
         child.add_argument("--ttl", type=int)
         child.add_argument("--wait", type=int, default=240)
-        child.add_argument("--remote", action="store_true", help="read remote state; plan never decrypts secrets")
+        child.add_argument("--remote", action="store_true", help="Read remote state; plan decrypts secrets only with --diff")
         child.add_argument("--auto-confirm", action="store_true", help="confirm after configuration readback; required for bulk deploy")
     for action in ("receipts", "clean"):
         child = sub.add_parser(action)
@@ -1030,6 +1074,10 @@ def main(argv=None):
                 result.update(clean_receipts(device=args.device, older_than_days=args.older_than))
         emit(result)
         return
+    if args.diff and (args.command not in ("plan", "deploy", "verify", "confirm", "rollback")
+                      or args.command == "plan" and not args.remote
+                      or args.command in ("confirm", "rollback") and not args.receipt):
+        parser.error("--diff requires deploy, verify, plan --remote, or confirm/rollback --receipt")
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.post_switch_port is not None and not 1 <= args.post_switch_port <= 65535:
@@ -1120,6 +1168,9 @@ def main(argv=None):
                         ask_post_switch_host=args.ask_post_switch_host)
             label = {"confirm": "Confirming deployment", "rollback": "Requesting deployment rollback",
                      "status": "Reading transaction status"}[args.command]
+            if args.diff:
+                with device_progress.stage("Comparing transaction configuration"):
+                    transaction_diff(transport, receipt, args.command)
             with device_progress.stage(label):
                 result = transport.call(args.command, receipt["token"])
             if result.get("state") == "confirmed":
@@ -1140,7 +1191,7 @@ def main(argv=None):
         raise DeployError("per-device connection or receipt arguments cannot be combined with --all")
     if args.command == "deploy" and len(selected) > 1 and not args.auto_confirm:
         raise DeployError("bulk deploy requires --auto-confirm; otherwise deploy and confirm one device at a time")
-    runtime = args.command in ("deploy", "verify")
+    runtime = args.command in ("deploy", "verify") or args.command == "plan" and args.diff
     resolver = SecretResolver.from_config(manifest.get("decryption", {}), providers=manifest.get("secretProviders", {}))
     transports = contextlib.ExitStack()
     try:
@@ -1157,7 +1208,7 @@ def main(argv=None):
             if args.command == "plan":
                 result = {"device": node, "target_host": compiled["target_host"],
                           "managed_paths": sorted(compiled["files"]), "packages": compiled["packages"],
-                          "secret_references": compiled["secret_references"], "secret_values_compared": False}
+                          "secret_references": compiled["secret_references"], "secret_values_compared": runtime}
                 if args.post_switch_host is not None:
                     result["post_switch_host"] = args.post_switch_host
                 if args.post_switch_port is not None:
@@ -1170,9 +1221,10 @@ def main(argv=None):
                     result["remote_identity_verified"] = True
                     if args.initialize:
                         result["initialization_required"] = not contract["identity"].get("device_id")
-                device_progress.message("Configuration preview ready")
-                emit(result)
-                continue
+                if not args.diff:
+                    device_progress.message("Configuration preview ready")
+                    emit(result)
+                    continue
             if args.command in ("confirm", "rollback", "status"):
                 if args.command == "status" and not args.receipt:
                     with device_progress.stage("Reading transaction status"):
@@ -1223,10 +1275,15 @@ def main(argv=None):
                     raise DeployError("managed resource ledger belongs to another device or is present on an uninitialized target")
                 request = {"paths": managed_paths(compiled, old),
                            "services": sorted(set(compiled["services"]) | set(old.get("services", [])))}
-                baseline = transport.call("check", data=canonical(request))
+                baseline = (configuration_diff(transport, request, compiled, old, node) if args.diff
+                            else transport.call("check", data=canonical(request)))
                 if initialize and (baseline.get("boot_id") != contract.get("boot_id")
                                    or baseline.get("identity") != contract["identity"]):
                     raise DeployError("initialization identity or boot changed before staging")
+            if args.command == "plan":
+                device_progress.message("Configuration preview ready")
+                emit(result)
+                continue
             changed = changed_files(compiled, baseline, old)
             service_changes = service_differences(compiled, baseline, old)
             agent = baseline.get("agent", {})
@@ -1339,6 +1396,8 @@ def main(argv=None):
                 with device_progress.stage("Checking applied configuration"):
                     actual = transport.call("check", data=canonical(request))
                     if changed_files(compiled, actual, transport.ledger()) or service_differences(compiled, actual, transport.ledger()):
+                        if args.diff:
+                            transaction_diff(transport, receipt, "confirm")
                         raise DeployError("automatic confirmation refused: readback differs")
                 with device_progress.stage("Confirming deployment"):
                     ready = transport.call("confirm", receipt["token"])
@@ -1357,7 +1416,7 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except (CompileError, SecretError, DeployError, ReceiptError) as error:
+    except (CompileError, SecretError, DeployError, ReceiptError, DiffError) as error:
         print("openwrt-deploy: " + str(error), file=sys.stderr)
         sys.exit(1)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

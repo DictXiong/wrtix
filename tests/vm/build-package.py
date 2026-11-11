@@ -75,7 +75,7 @@ fixture:
         argv = [args.apk, 'mkpkg', '--info', 'name:wrtix-agent', '--info', 'version:' + args.version,
                 '--info', 'arch:noarch', '--info', 'license:GPL-2.0-only',
                 '--info', 'description:Transactional OpenWrt configuration agent',
-                '--info', 'depends:jq uci ubus flock coreutils-timeout', '--files', str(package_root),
+                '--info', 'depends:jq uci ubus flock coreutils-timeout coreutils-base64', '--files', str(package_root),
                 '--output', str(output)]
         if args.sign_key:
             argv += ['--sign-key', str(args.sign_key.resolve())]

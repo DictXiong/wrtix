@@ -6,6 +6,12 @@ and disabled behavior; builds the tools; and runs controller, simulated target,
 controller-to-agent and sysupgrade inventory regressions. The CI uses this same
 entry point. No device credentials or live inventory are required.
 
+Diff regressions cover stdout JSON compatibility, verify failure versus remote
+preview success, pre-apply ordering, receipt-only confirmation and rollback,
+unchanged deadlines, noop, secret provenance and private workspace cleanup.
+They execute the real shell agent in isolated synthetic filesystem trees through
+the controller, without claiming SSH, official VM or physical-device acceptance.
+
 The initial x86_64 acceptance ran 34 controller, 43 inherited SSH/SOPS/receipt,
 55 target, 5 controller-to-agent and 7 package-lifecycle/backup cases. These are regression
 counts, not independent proofs of all platform behavior. aarch64 is exported and

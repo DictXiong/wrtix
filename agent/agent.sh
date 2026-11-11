@@ -280,6 +280,86 @@ snapshot() {
   '(from_entries) as $f | {schema_version:1,boot_id:$boot,identity:$contract.identity,contract_sha256:($contract.contract_sha256//null),files:($f|map_values(.sha256)),modes:($f|map_values(.mode)),services:$services,resolver_state:$resolver,ledger:$ledger,agent:$contract}' < "$work/files" || { rm -rf "$work"; return 1; }
  rm -rf "$work"
 }
+# Return bounded display data separately from the hash-only transaction baseline.
+# This operation never updates the journal, lease, recovery owner or receipt.
+diff_snapshot() (
+ # The subshell already isolates these variables. Keep the workspace in scope
+ # for its EXIT trap, including when a nested validation exits unsuccessfully.
+ token=${1:-}; staged_backup=false
+ diff_work=$(mktemp -d "$(p /tmp)/wrtix-diff.XXXXXX") || fail snapshot_workspace_failed
+ trap 'rm -rf "$diff_work"' EXIT
+ head -c 262145 > "$diff_work/input"
+ [ "$(wc -c < "$diff_work/input" | tr -d ' ')" -le 262144 ] || fail request_too_large
+ lock
+ if [ -n "$token" ]; then
+  load; [ "$token" = "$TOKEN" ] || fail token_mismatch
+  jq -se 'length==1 and (.[0]|keys==["target"] and (.target=="candidate" or .target=="backup"))' "$diff_work/input" >/dev/null || fail invalid_check_request
+  side=$(jq -r .target "$diff_work/input")
+  manifest_request "$STATE/manifest.json" > "$diff_work/request"
+  # Old journals have no provenance: keep their contents private rather than guess.
+  jq '[.files[]|select(.sensitive!=false)|.path]+["etc/wrtix/root-password-hash","etc/shadow"]|unique' "$STATE/manifest.json" > "$diff_work/opaque"
+  if [ "$side" = candidate ]; then
+   jq '{files:(.files|map({key:.path,value:.sha256})|from_entries),modes:(.files|map({key:.path,value:.mode})|from_entries),
+    services:(.services|map_values({enabled:.enable,running:.running})),
+    resolver_state:(if .resolver_target==null then null else {type:"symlink",target:.resolver_target} end),root_password_managed}' "$STATE/manifest.json" > "$diff_work/target"
+   jq -r '.files[]|select(.delete==false)|[.path,("candidate/"+(.payload|ltrimstr("payload/")))]|@tsv' "$STATE/manifest.json" > "$diff_work/target-paths"
+  else
+   if [ ! -f "$STATE/applying" ] && [ ! -f "$STATE/applied" ]; then
+    # Cancelling an unapplied candidate leaves current configuration untouched.
+    staged_backup=true
+    printf '{}\n' > "$diff_work/target"; : > "$diff_work/target-paths"
+   else
+    plain "$STATE/before.json" || fail missing_backup_metadata
+    jq --slurpfile services "$STATE/services.before" --slurpfile resolver "$STATE/resolver.before" \
+    '{files:(map({key:.path,value:(.sha256//null)})|from_entries),modes:(map({key:.path,value:(.mode//null)})|from_entries),services:$services[0],resolver_state:$resolver[0]}' "$STATE/before.json" > "$diff_work/target"
+    jq -r '.[]|select(.present)|[.path,("backup/"+(.index|tostring))]|@tsv' "$STATE/before.json" > "$diff_work/target-paths"
+   fi
+  fi
+  # Internal bookkeeping is not user configuration. Shadow is only a private
+  # content-change indicator, never a source of display bytes.
+  jq --arg ledger "$LEDGER" 'del(.files[$ledger],.modes[$ledger])' "$diff_work/target" > "$diff_work/target.new"
+  mv "$diff_work/target.new" "$diff_work/target"
+ else
+  jq -se 'length==1 and (.[0]|keys==["opaque_paths","paths","services"] and
+   (.opaque_paths|type=="array" and length<=128 and all(.[];type=="string")) and
+   (. as $r|all(.opaque_paths[]; . as $p|$r.paths|index($p)!=null)))' "$diff_work/input" >/dev/null || fail invalid_check_request
+  jq '{paths,services}' "$diff_work/input" > "$diff_work/request"
+  jq '[.opaque_paths[],"etc/wrtix/root-password-hash","etc/shadow"]|unique' "$diff_work/input" > "$diff_work/opaque"
+ fi
+ snapshot "$diff_work/request" > "$diff_work/current"
+ if [ "$staged_backup" = true ]; then
+  jq --slurpfile request "$diff_work/request" '{files:(.files|with_entries(select(.key as $p|$request[0].paths|index($p)!=null))),modes:.modes,services:.services,resolver_state:.resolver_state}' "$diff_work/current" > "$diff_work/target"
+ fi
+ # Include provenance from the previous successful deployment, including files
+ # whose secret references have been removed in the new configuration.
+ jq -s '.[0]+(.[1].ledger.sensitive_paths//[])|unique' "$diff_work/opaque" "$diff_work/current" > "$diff_work/opaque.new"
+ mv "$diff_work/opaque.new" "$diff_work/opaque"
+ jq -r '.paths[]' "$diff_work/request" > "$diff_work/current-paths"
+ : > "$diff_work/current-rows"; : > "$diff_work/target-rows"
+ for side in current target; do
+  [ "$side" != target ] || [ -n "$token" ] || continue
+  while IFS="$(printf '\t')" read -r rel source; do
+   [ "$rel" != "$LEDGER" ] || continue
+   jq -e --arg p "$rel" 'index($p)!=null' "$diff_work/opaque" >/dev/null && continue
+   expected=$(jq -r --arg p "$rel" '.files[$p]//empty' "$diff_work/$side")
+   [ -n "$expected" ] || continue
+   if [ "$side" = current ]; then source=$(p /$rel); else source=$STATE/$source; fi
+   plain "$source" && [ "$(wc -c < "$source" | tr -d ' ')" -le 1048576 ] || fail diff_content_unavailable
+   base64 < "$source" > "$diff_work/encoded" || fail diff_content_unavailable
+   # Hash the displayed bytes too; never print a stale/mixed snapshot.
+   base64 -d < "$diff_work/encoded" > "$diff_work/decoded" || fail diff_content_unavailable
+   [ "$(sha "$diff_work/decoded")" = "$expected" ] || fail diff_snapshot_changed
+   jq -Rs --arg p "$rel" '{key:$p,value:(gsub("\n";""))}' < "$diff_work/encoded" >> "$diff_work/$side-rows"
+  done < "$diff_work/$side-paths"
+  jq -s from_entries "$diff_work/$side-rows" > "$diff_work/$side-contents"
+ done
+ [ "$staged_backup" = false ] || cp "$diff_work/current-contents" "$diff_work/target-contents"
+ [ -n "$token" ] || { printf 'null\n' > "$diff_work/target"; printf '{}\n' > "$diff_work/target-contents"; }
+ jq -cn --slurpfile current "$diff_work/current" --slurpfile target "$diff_work/target" \
+  --slurpfile contents "$diff_work/current-contents" --slurpfile desired "$diff_work/target-contents" --slurpfile opaque "$diff_work/opaque" \
+  '{current:$current[0],target:$target[0],contents:$contents[0],target_contents:$desired[0],opaque_paths:$opaque[0]}'
+ unlock
+)
 terminal() { [ -f "$STATE/confirmed" ] || [ -f "$STATE/rolled-back" ]; }
 active() { secure_dir "$STATE" && plain "$STATE/manifest.json" && ! terminal; }
 load() {
@@ -356,6 +436,7 @@ valid_manifest() {
  (.baseline|type=="object" and (.files|type=="object") and (.modes|type=="object") and (.services|type=="object")) and
  (.files|type=="array" and length<=128 and
   all(.[];type=="object" and (.path|type=="string") and (.delete|type=="boolean") and
+   (if has("sensitive") then (.sensitive|type=="boolean") else true end) and
    (if .delete then .payload==null and .sha256==null and .size==0 else
     (.payload|type=="string") and (.sha256|hex) and (.size|type=="number" and floor==. and .>=0 and .<=1048576) and
     (.mode=="600" or .mode=="644" or .mode=="700" or .mode=="755") end)) and
@@ -1168,7 +1249,7 @@ stage() {
  manifest_request "$incoming/manifest.json" > "$incoming/request.json"
  jq '. as $m | [.files[] | . as $f | select(if .delete then $m.baseline.files[$f.path]!=null else .sha256!=$m.baseline.files[$f.path] or .mode!=$m.baseline.modes[$f.path] end) | .path]' "$incoming/manifest.json" > "$incoming/changed-paths.json"
  jq .baseline "$incoming/manifest.json" > "$incoming/baseline.json"
- jq '{schema_version:1,kind:"wrtix-owned-resources",device_id,files:[.files[]|select(.delete==false)|.path],services:.managed_services,resolver_target}' "$incoming/manifest.json" > "$incoming/ledger.json"
+ jq '{schema_version:1,kind:"wrtix-owned-resources",device_id,files:[.files[]|select(.delete==false)|.path],sensitive_paths:[.files[]|select(.delete==false and .sensitive!=false)|.path],services:.managed_services,resolver_target}' "$incoming/manifest.json" > "$incoming/ledger.json"
  rm "$incoming/bundle.tar"
  [ -z "$previous_token" ] || mv "$STATE" "$ARCHIVES/$previous_token"
  mv "$incoming" "$STATE"
@@ -1379,6 +1460,7 @@ case "$command" in
   head -c 262145 > "$work"
   [ "$(wc -c < "$work" | tr -d ' ')" -le 262144 ] || fail request_too_large
   snapshot "$work";;
+ diff) diff_snapshot "${2:-}";;
  stage) stage;;
  apply) apply "${2:-}";;
  status) status;;

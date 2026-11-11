@@ -30,6 +30,13 @@ validates final resources, renders exact UCI bytes and constructs a private
 transaction archive. Required compile checks see the final fleet and selected
 resources through private stdin. Their output is suppressed.
 
+Optional resource diffs use an additive, read-only agent operation. Display bytes
+are bounded and checked against the transaction's hash-only baseline; they never
+enter receipts or transaction manifests. Secret-reference provenance marks whole
+files as private and persists in the ownership ledger and transaction file rows.
+Receipt-based comparisons use candidate payloads or rollback backups on the
+authenticated target, independently of the current configuration checkout.
+
 SSH uses the caller's normal host-key policy and authentication, optionally with
 an agent or supplied master socket. A transaction creates and reuses a master when
 needed. An SSH destination may be an alias, hostname or IP; it is not an implicit

@@ -41,6 +41,7 @@ def parse_args(argv=None):
     parser.add_argument("--out-link", default=None, help="Nix build output link (default: ./result)")
     parser.add_argument("--offline", action="store_true", help="Use only already available Nix inputs")
     parser.add_argument("--quiet", "-q", action="store_true", help="Hide progress messages; errors remain visible")
+    parser.add_argument("--diff", action="store_true", help="Show resource differences on stderr; preserve JSON output")
     parser.add_argument("--print-build-logs", "-L", action="store_true", help="Print Nix build logs")
     parser.add_argument("--receipt", help="Private transaction receipt; recovery never evaluates the flake")
     parser.add_argument("--older-than", type=int, metavar="DAYS",
@@ -71,6 +72,9 @@ def parse_args(argv=None):
     parser.add_argument("--system", choices=("x86_64-linux", "aarch64-linux"), default="x86_64-linux",
                         help="Controller platform for an imported project")
     args = parser.parse_args(argv)
+    if args.diff and (args.action not in ("verify", "dry-run", "test", "switch", "confirm", "rollback")
+                      or args.action == "dry-run" and not args.remote):
+        parser.error("--diff requires verify, dry-run --remote, test, switch, or receipt confirmation/rollback")
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
     if args.post_switch_port is not None and not 1 <= args.post_switch_port <= 65535:
@@ -246,6 +250,8 @@ def controller_args(args, action):
         words.append("--ask-post-switch-host")
     if args.quiet:
         words.append("--quiet")
+    if args.diff:
+        words.append("--diff")
     if action == "clean":
         words += ["--older-than", str(args.older_than if args.older_than is not None else 30)]
     if args.action == "switch" and not args.receipt:
