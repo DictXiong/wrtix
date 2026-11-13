@@ -234,6 +234,13 @@ commands accept `--receipt`; inspect `openwrt-rebuild --help` for the available
 confirm, rollback, status and cleanup operations. Keep the receipt until the
 transaction has completed and you have verified access.
 
+Confirmation reads fresh transaction status and uses its remaining uptime lease
+as the SSH call budget, plus 15 seconds to receive the result. The grace does not
+extend the target's deadline or relax either readback or required checks. This
+applies to automatic confirmation and receipt recovery; `--wait` still controls
+activation/reconnection, not confirmation. Invalid, expired or mismatched status
+blocks confirmation. A client timeout remains a failure, not evidence of success.
+
 A missing required check, changed target identity, runtime mismatch or unsafe
 host key blocks the operation. Resolve the cause rather than disabling checks.
 Firmware corruption, physical disconnection and arbitrary package mutations are

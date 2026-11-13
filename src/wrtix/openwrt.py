@@ -33,6 +33,7 @@ from config_diff import DiffError, decode_contents, show_diff
 
 HERE = Path(__file__).resolve().parent
 REBOOT_INPUT_SECONDS = 150
+CONFIRM_REPLY_GRACE_SECONDS = 15
 REMOTE = "/usr/libexec/wrtix/agent"
 GUARD = "/etc/init.d/wrtix-agent"
 LEDGER = "etc/wrtix/managed.json"
@@ -401,9 +402,33 @@ class Transport:
             raise DeployError("invalid transaction command")
         if token is not None and not re.fullmatch(r"[0-9a-f]{32}", token):
             raise DeployError("invalid receipt token")
+        timeout = 1800 if action == "package-prepare" else 60
+        if action == "confirm":
+            # The agent can legitimately run required checks beyond the normal
+            # 60s RPC limit. Its immutable uptime lease bounds every successful
+            # confirmation, including the final readback. Budget from fresh
+            # status rather than a stale receipt or the activation --wait.
+            started = time.monotonic()
+            current = self.call("status")
+            if current.get("token") != token or current.get("device_id") != self.node:
+                raise DeployError("receipt transaction identity differs")
+            if (current.get("state") != "applied" or current.get("reload_complete") is not True
+                    or not isinstance(current.get("boot_id"), str)
+                    or current.get("boot_id") != current.get("current_boot_id")):
+                raise DeployError("transaction is not ready for confirmation")
+            deadline, now = current.get("deadline"), current.get("now")
+            if (type(deadline) is not int or type(now) is not int or now < 0
+                    or not 0 < deadline - now <= 7200):
+                raise DeployError("invalid or expired confirmation lease")
+            remaining = deadline - now - (time.monotonic() - started)
+            if remaining <= 0:
+                raise DeployError("transaction deadline passed; automatic rollback remains armed")
+            # This grace only permits delivery of the response after the final
+            # deadline check; it grants no extra time to commit on the target.
+            timeout = math.ceil(remaining) + CONFIRM_REPLY_GRACE_SECONDS
         try:
             result = self._run_stage(action, shlex.join(["sh", REMOTE, action] + ([] if token is None else [token])),
-                                     data=data, timeout=1800 if action == "package-prepare" else 60)
+                                     data=data, timeout=timeout)
         except DeployError as error:
             if action == "diff" and "invalid_command" in str(error):
                 raise DeployError("--diff requires an updated wrtix-agent package; no configuration was changed") from None

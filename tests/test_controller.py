@@ -199,6 +199,62 @@ class TransportTests(unittest.TestCase):
     def transport(self, **kwargs):
         return openwrt.Transport(connection_args(**kwargs), {}, compile_node(), "node")
 
+    def confirmation_status(self, **changes):
+        return {"token": TOKEN, "device_id": "node", "state": "applied", "reload_complete": True,
+                "boot_id": BOOT, "current_boot_id": BOOT, "deadline": 700, "now": 100, **changes}
+
+    def test_confirmation_uses_remaining_lease_not_the_60_second_rpc_limit(self):
+        current = self.confirmation_status()
+        def remote(command, data=None, timeout=60):
+            if command.endswith(" status"):
+                self.assertEqual(timeout, 60)
+                return json.dumps(current).encode()
+            # Model a valid required check exceeding the old client limit,
+            # without spending two minutes on a wall-clock sleep in CI.
+            if timeout < 122:
+                raise openwrt.DeployError("SSH operation timed out")
+            return b'{"state":"confirmed"}'
+        with self.transport() as transport, patch.object(transport, "run", side_effect=remote) as run, \
+                patch.object(openwrt.time, "monotonic", side_effect=[10, 13]):
+            self.assertEqual(transport.call("confirm", TOKEN), {"state": "confirmed"})
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.kwargs["timeout"], 612)
+            self.assertEqual(current["deadline"], 700)
+
+    def test_confirmation_rejects_invalid_or_expired_status_before_issuing_it(self):
+        changes = ({"token": "b" * 32}, {"device_id": "other"}, {"state": "rolled-back"},
+                   {"reload_complete": False}, {"current_boot_id": "other"}, {"deadline": 100},
+                   {"boot_id": None, "current_boot_id": None},
+                   {"deadline": 7301}, {"now": True}, {"deadline": float("inf")})
+        for change in changes:
+            with self.subTest(change=change), self.transport() as transport, \
+                    patch.object(transport, "run", return_value=json.dumps(self.confirmation_status(**change)).encode()) as run:
+                with self.assertRaises(openwrt.DeployError):
+                    transport.call("confirm", TOKEN)
+                self.assertEqual(run.call_count, 1)
+                self.assertTrue(run.call_args.args[0].endswith(" status"))
+
+    def test_confirmation_status_roundtrip_cannot_restore_expired_time(self):
+        with self.transport() as transport, patch.object(transport, "run", return_value=json.dumps(
+                self.confirmation_status(deadline=102)).encode()) as run, \
+                patch.object(openwrt.time, "monotonic", side_effect=[10, 13]):
+            with self.assertRaisesRegex(openwrt.DeployError, "deadline passed"):
+                transport.call("confirm", TOKEN)
+            self.assertEqual(run.call_count, 1)
+
+    def test_confirmation_failure_is_not_swallowed_and_other_rpc_limits_stay_unchanged(self):
+        status = json.dumps(self.confirmation_status()).encode()
+        with self.transport() as transport, patch.object(transport, "run", side_effect=[
+                status, openwrt.DeployError("preconfirm_check_failed")]) as run:
+            with self.assertRaisesRegex(openwrt.DeployError, "preconfirm_check_failed"):
+                transport.call("confirm", TOKEN)
+        for action, timeout in (("check", 60), ("verify", 60), ("rollback", 60), ("package-prepare", 1800)):
+            with self.subTest(action=action), self.transport() as transport, \
+                    patch.object(transport, "run", return_value=b'{}') as run:
+                transport.call(action)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.kwargs["timeout"], timeout)
+
     def test_existing_auth_is_used_for_enrollment(self):
         with self.transport(initialize=True) as transport, patch.object(openwrt, "interactive_terminal", return_value=True):
             options = transport._ssh_options()
