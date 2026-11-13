@@ -497,7 +497,8 @@ def service_differences(compiled, baseline, old):
         if not actual.get("present") and not desired["enable"]:
             continue
         if (actual.get("enabled") != desired["enable"]
-                or desired.get("running") is not None and actual.get("running") != desired["running"]):
+                or (desired.get("checkRunning", True) and desired.get("running") is not None
+                    and actual.get("running") != desired["running"])):
             different.append(name)
     different.extend(sorted(set(old.get("services", [])) - set(compiled["services"])))
     return sorted(set(different))

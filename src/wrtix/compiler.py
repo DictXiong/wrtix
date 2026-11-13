@@ -243,7 +243,7 @@ def prepare_resources(node, reserved_services):
         files[rel], modes[rel] = data, mode
     services = {}
     for service, spec in node.get("services", {}).items():
-        if not isinstance(spec, dict) or set(spec) - {"enable", "running", "oneshot", "action", "reloadOn"}:
+        if not isinstance(spec, dict) or set(spec) - {"enable", "running", "checkRunning", "oneshot", "action", "reloadOn"}:
             raise CompileError("unsupported service resource fields")
         if not NAME.fullmatch(service) or len(service) > 64:
             raise CompileError("invalid service name")
@@ -262,7 +262,11 @@ def prepare_resources(node, reserved_services):
         if action not in ("reload", "restart"):
             raise CompileError("unsupported service activation action")
         triggers = spec.get("reloadOn", {"uci": [], "files": []})
+        check_running = spec.get("checkRunning", True)
+        if type(check_running) is not bool:
+            raise CompileError("invalid service runtime check policy")
         services[service] = {"enable": enabled, "running": running if enabled else False,
+                             "checkRunning": check_running,
                              "oneshot": spec.get("oneshot", False) or running is None,
                              "reloadOn": triggers, "action": action}
         for package in triggers.get("uci", []):

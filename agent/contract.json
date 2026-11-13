@@ -3,6 +3,7 @@
   "profile": "wrtix-v2",
   "resource_model": "owned-openwrt-resources",
   "package_preparation": 1,
+  "service_runtime_check_policy": 1,
   "managed_file_modes": [
     "600",
     "644",

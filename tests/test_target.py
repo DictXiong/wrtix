@@ -416,7 +416,7 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         token, _ = self.apply({"etc/config/example": (b"after", "600")},
                               {"fixture": {"enable": True, "running": True, "action": "reload"}})
         self.ready()
-        self.fault_tool("jq", ".value.running|tostring)]|@tsv")
+        self.fault_tool("jq", ".value.running|tostring)")
         failed = self.run_engine("confirm", token, ok=False)
         self.assertIn(b"confirmation_readback_mismatch", failed.stderr)
 
@@ -543,7 +543,7 @@ except (ValueError,KeyError,OSError):sys.exit(3)
         self.put("run/fixture.reload-only", b"reload needs an existing daemon")
         self.put("run/fixture.fail-start", b"synthetic startup failure")
         token, _ = self.apply({"etc/config/example": (b"after", "600")},
-                              {"fixture": {"enable": True, "running": True, "action": "reload"}})
+                              {"fixture": {"enable": True, "running": True, "checkRunning": False, "action": "reload"}})
         status = self.wait(lambda result: result["state"] == "rolled-back" and result["reload_complete"])
         self.run_engine("confirm", token, ok=False)
         self.assertLess(status["now"], status["deadline"])

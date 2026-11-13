@@ -127,6 +127,11 @@ let
         default = null;
         description = "Expected persistent process state after applying the action; null permits one-shot services.";
       };
+      checkRunning = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Whether process state also gates readback and confirmation. Activation actions and errors are unaffected.";
+      };
       action = mkOption {
         type = types.enum [
           "reload"

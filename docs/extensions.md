@@ -44,6 +44,21 @@ choose a single producer or express an allowed explicit override. Never rely on
 module import order. A replacement must still pass the resource validators and
 all required extension checks.
 
+## Service activation and acceptance
+
+`services.<name>.running` controls start/stop intent and retains its existing
+one-shot and rollback semantics. `checkRunning` defaults to `true`; set it to
+`false` to accept matching files and service enablement without requiring the
+candidate daemon to remain healthy. Enable, disable, start, stop and reload
+commands still run when needed, and their failures still fail deployment.
+Rollback continues to restore and verify the actual baseline process state.
+Explicit required checks remain mandatory, regardless of `checkRunning`.
+
+This policy requires matching controller and agent packages: the contract carries
+`service_runtime_check_policy`. Older agents are rejected before mutation rather
+than silently applying different acceptance rules. Complete pending transactions
+with their original controller before upgrading the agent.
+
 ## Required checks
 
 Custom checks are optional. Direct resource configurations need no validator or

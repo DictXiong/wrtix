@@ -116,6 +116,23 @@ class ResourceTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(compiler.CompileError):
                 compile_node({"services": {name: {"enable": True}}, "ownership": ownership})
 
+    def test_service_runtime_acceptance_is_explicit_and_preserves_activation_intent(self):
+        for enabled in (True, False):
+            for checked in (True, False):
+                with self.subTest(enabled=enabled, checked=checked):
+                    node = {"services": {"demo": {"enable": enabled, "running": enabled,
+                                                  "checkRunning": checked}}}
+                    out = compile_node(node)
+                    spec = out["services"]["demo"]
+                    self.assertEqual(spec["running"], enabled)
+                    self.assertFalse(spec["oneshot"])
+                    actual = {"services": {"demo": {"present": True, "enabled": enabled,
+                                                     "running": not enabled}}}
+                    self.assertEqual(openwrt.service_differences(out, actual, {}), ["demo"] if checked else [])
+        self.assertTrue(compile_node({"services": {"demo": {"running": True}}})["services"]["demo"]["checkRunning"])
+        with self.assertRaises(compiler.CompileError):
+            compile_node({"services": {"demo": {"checkRunning": "false"}}})
+
     def test_paths_and_raw_uci_ownership_are_protected(self):
         for path in ("/etc/shadow", "/etc/wrtix/identity.json", "/etc/../tmp/foo", "/etc/init.d/wrtix-agent", "/etc/config/network"):
             with self.subTest(path=path), self.assertRaises(compiler.CompileError):

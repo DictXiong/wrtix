@@ -93,6 +93,57 @@ class ControllerAgent(unittest.TestCase):
         self.target.restored()
         self.assertFalse((self.target.root / executable[1:]).exists())
 
+    def test_static_service_acceptance_preserves_activation_and_metadata_checks(self):
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                (self.target.root / "etc/rc.d/S50fixture").unlink(missing_ok=True)
+                self.target.service(enabled=not enabled, running=not enabled)
+                node = {"files": {"/etc/example": {"text": "managed"}},
+                        "services": {"fixture": {"enable": enabled, "running": enabled,
+                                                 "checkRunning": False}}}
+                compiled, tx, request = self.deploy(node)
+                spec = compiled["services"]["fixture"]
+                self.assertEqual(spec["running"], enabled)
+                self.assertFalse(spec["oneshot"])
+                actions = (self.target.root / "run/service-actions").read_text()
+                self.assertIn("fixture " + ("start" if enabled else "stop"), actions)
+                # The daemon's subsequent health is separate from the applied files.
+                self.target.put("run/openwrt-test-services/fixture.running",
+                                (str(not enabled).lower() + "\n").encode())
+                actual = self.target.run_engine("check", data=openwrt.canonical(request))
+                self.assertEqual(openwrt.changed_files(compiled, actual, actual["ledger"]), [])
+                self.assertEqual(openwrt.service_differences(compiled, actual, actual["ledger"]), [])
+                if enabled:
+                    (self.target.root / "etc/rc.d/S50fixture").unlink()
+                else:
+                    (self.target.root / "etc/rc.d/S50fixture").symlink_to("../init.d/fixture")
+                failed = self.target.run_engine("confirm", tx["token"], ok=False)
+                self.assertIn(b"confirmation_readback_mismatch", failed.stderr)
+                (self.target.root / "etc/rc.d/S50fixture").unlink(missing_ok=True)
+                if enabled:
+                    (self.target.root / "etc/rc.d/S50fixture").symlink_to("../init.d/fixture")
+                self.target.run_engine("confirm", tx["token"])
+
+    def test_static_acceptance_still_rejects_changed_file(self):
+        compiled, tx, request = self.deploy({"files": {"/etc/example": {"text": "managed"}}})
+        self.target.put("etc/example", b"drift")
+        actual = self.target.run_engine("check", data=openwrt.canonical(request))
+        self.assertEqual(openwrt.changed_files(compiled, actual, actual["ledger"]), ["etc/example"])
+        failed = self.target.run_engine("confirm", tx["token"], ok=False)
+        self.assertIn(b"confirmation_readback_mismatch", failed.stderr)
+        self.target.run_engine("rollback", tx["token"])
+        self.target.restored()
+
+    def test_static_acceptance_rollback_restores_enabled_stopped_daemon(self):
+        self.target.service(enabled=True, running=False)
+        _, tx, _ = self.deploy({"services": {"fixture": {"enable": True, "running": True,
+                                                       "checkRunning": False}}})
+        self.target.run_engine("rollback", tx["token"])
+        self.target.restored()
+        actual = self.target.check([], ["fixture"])["services"]["fixture"]
+        self.assertTrue(actual["enabled"])
+        self.assertFalse(actual["running"])
+
 
 if __name__ == "__main__":
     unittest.main()

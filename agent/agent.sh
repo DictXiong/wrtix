@@ -446,6 +446,7 @@ valid_manifest() {
  (.services|type=="object" and length<=128 and (keys|all(.[];. != "wrtix-agent")) and all(.[];
    (if has("reload") then (.reload|type)=="boolean" else true end) and
    (if has("oneshot") then (.oneshot|type)=="boolean" else true end) and
+   (if has("checkRunning") then (.checkRunning|type)=="boolean" else true end) and
    (.enable|type=="boolean") and ((.running|type=="boolean") or .running==null) and (.action=="reload" or .action=="restart") and (.enable or (.running==false)))))
  ' "$1" >/dev/null 2>&1 || fail invalid_manifest
  jq -e '
@@ -808,20 +809,22 @@ child_step() {
  rm -f "$STATE/reload.child"; return 1
 }
 desired_services_match() {
- local name present enable running actual actual_enabled links mode=${1:-runtime}
- jq -r '.services|to_entries[]|[.key,(.value.enable|tostring),(.value.running|tostring)]|@tsv' "$STATE/manifest.json" > "$STATE/desired-services.tsv" || return 1
- while IFS="$(printf '\t')" read -r name enable running; do
+ local name present enable running check_running actual actual_enabled links mode=${1:-runtime}
+ jq -r '.services|to_entries[]|[.key,(.value.enable|tostring),(.value.running|tostring),(if .value|has("checkRunning") then .value.checkRunning else true end|tostring)]|@tsv' "$STATE/manifest.json" > "$STATE/desired-services.tsv" || return 1
+ while IFS="$(printf '\t')" read -r name enable running check_running; do
   if [ ! -x "$(p /etc/init.d/$name)" ]; then
    [ "$enable" = false ] || return 1
-   actual=$(service_running "$name") || return 1
-   [ "$actual" = false ] || return 1
+   if [ "$mode" != enabled ] && [ "$check_running" = true ] && [ "$running" != null ]; then
+    actual=$(service_running "$name") || return 1
+    [ "$actual" = false ] || return 1
+   fi
    links=$(service_links "$name") || return 1
    [ -z "$links" ] || return 1
    continue
   fi
   actual_enabled=false; service_exec "$name" enabled && actual_enabled=true
   [ "$actual_enabled" = "$enable" ] || return 1
-  if [ "$mode" != enabled ] && [ "$running" != null ]; then
+  if [ "$mode" != enabled ] && [ "$check_running" = true ] && [ "$running" != null ]; then
    actual=$(service_running "$name") || return 1
    [ "$actual" = "$running" ] || return 1
   fi
