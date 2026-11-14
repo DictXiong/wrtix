@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--artifacts', required=True, type=Path)
     parser.add_argument('--directory', required=True, type=Path)
     parser.add_argument('--image', type=Path)
+    parser.add_argument('--accel', choices=('kvm', 'tcg'), help='Override automatic acceleration selection')
     args = parser.parse_args()
     artifacts, work = args.artifacts.resolve(), args.directory.resolve()
     if work.exists():
@@ -37,7 +38,7 @@ def main():
                         machine.PIN['url']], check=True)
     vm = work / 'guest'
     machine.prepare(vm, image)
-    machine.start(vm, 22080, 22081)
+    machine.start(vm, 22080, 22081, accel=args.accel)
     passed = []
 
     def remote(command, data=None, check=True):

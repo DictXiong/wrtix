@@ -7,11 +7,12 @@ private copy. The upstream checksum is published alongside the image:
 
 The harness requires Python 3, QEMU x86_64, `debugfs`, OpenSSH and network
 access. KVM is preferred; QEMU falls back to emulation when unavailable.
-Keep the working directory outside the Git checkout. It contains a disposable
+Use `--accel kvm` or `--accel tcg` to reproduce a specific runner mode; both run
+the same transaction checks and deadlines. Keep the working directory outside the Git checkout. It contains a disposable
 private SSH key, guest disk, console logs and transaction evidence.
 
 ```sh
-python3 tests/vm/machine.py --directory /tmp/wrtix-vm prepare
+python3 tests/vm/machine.py --directory /tmp/wrtix-vm prepare --image /path/to/openwrt.img.gz
 python3 tests/vm/machine.py --directory /tmp/wrtix-vm start
 python3 tests/vm/machine.py --directory /tmp/wrtix-vm ssh 'cat /etc/openwrt_release'
 ```
@@ -87,3 +88,6 @@ installs without `--allow-untrusted`, exercises the controller and package gates
 and stops its VM on exit. It writes a non-secret `summary.json` alongside private
 VM state. CI publishes only the summary and explicitly selected boot diagnostics;
 never upload the whole working directory.
+The public failure summary retains only known protocol errors and lifecycle fields.
+Its status snapshot is taken after the command fails; it is not evidence of the
+exact failing predicate. Full controller stderr and receipts remain private.

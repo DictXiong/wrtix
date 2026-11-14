@@ -77,13 +77,15 @@ def checked(directory):
         raise RuntimeError("not a disposable wrtix VM directory")
 
 
-def start(directory, port, alternate_port):
+def start(directory, port, alternate_port, *, accel=None):
     checked(directory)
     if (directory / "machine.json").exists():
         raise RuntimeError("VM already started; stop it first")
     monitor = directory / "monitor.sock"
     monitor.unlink(missing_ok=True)
-    accel = "kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg"
+    accel = accel or ("kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg")
+    if accel not in ("kvm", "tcg"):
+        raise ValueError("unsupported VM acceleration mode")
     args = ["qemu-system-x86_64", "-accel", accel, "-m", "384", "-smp", "2",
             "-drive", f"file={directory / 'disk.img'},format=raw,if=virtio",
             "-device", "virtio-net-pci,netdev=management",
@@ -156,6 +158,7 @@ def main():
     init = sub.add_parser("prepare")
     init.add_argument("--image", required=True, type=Path)
     boot = sub.add_parser("start")
+    boot.add_argument("--accel", choices=("kvm", "tcg"), help="Override automatic acceleration selection")
     boot.add_argument("--port", type=int, default=22080)
     boot.add_argument("--alternate-port", type=int, default=22081)
     sub.add_parser("stop")
@@ -169,7 +172,7 @@ def main():
     if any(c.isspace() for c in str(directory)):
         parser.error("VM directory must not contain whitespace")
     if args.command == "prepare": prepare(directory, args.image.resolve())
-    elif args.command == "start": start(directory, args.port, args.alternate_port)
+    elif args.command == "start": start(directory, args.port, args.alternate_port, accel=args.accel)
     elif args.command == "stop": stop(directory)
     else: raise SystemExit(subprocess.call(ssh_args(directory, args.alternate) + args.args))
 

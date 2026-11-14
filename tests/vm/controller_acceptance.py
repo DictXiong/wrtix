@@ -136,17 +136,19 @@ class Acceptance:
                 if probe.returncode:
                     raise ValueError('status unavailable')
                 status = json.loads(probe.stdout)
+                if not isinstance(status, dict):
+                    raise ValueError('invalid status')
                 fields = {
                     'state': {'absent', 'staged', 'applied', 'confirmed', 'rolled-back',
                               'rollback_pending', 'rollback_incomplete', 'reload_failed'},
                     'reboot_state': {'required', 'armed', 'awaiting-resume', 'resumed'},
                 }
-                diagnostic['target'] = {key: status[key] for key, values in fields.items()
+                diagnostic['post_failure_status'] = {key: status[key] for key, values in fields.items()
                                         if status.get(key) in values}
                 for key, kind in (('reload_complete', bool), ('reboot_required', bool),
                                   ('now', int), ('deadline', int)):
                     if type(status.get(key)) is kind:
-                        diagnostic['target'][key] = status[key]
+                        diagnostic['post_failure_status'][key] = status[key]
             except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
                 diagnostic['status_available'] = False
             self.save('failure.json', diagnostic)
@@ -183,6 +185,7 @@ class Acceptance:
             raise RuntimeError('official OpenWrt 25.12 VM required')
         before = self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout
         original_network = self.remote('cat /etc/config/network').stdout
+        original_mac = self.remote('cat /sys/class/net/eth0/address').stdout.strip()
         self.save('original-network', original_network)
         first = self.node(files={'/etc/wrtix-first-probe': {'text': 'candidate', 'mode': '0600'}})
         self.command('deploy', first, name='first-unconfirmed', options=(
@@ -287,6 +290,9 @@ class Acceptance:
         restore['target_host'] = self.host
         self.command('deploy', restore, name='restore-mac', options=(
             '--receipt', self.receipt('restore-mac'), '--ttl', '300', '--auto-confirm'))
+        restored_identity = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
+        assert restored_identity['boot_id'] != after['boot_id']
+        assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == original_mac
         self.passed('original network and MAC restored through second guarded reboot')
         self.save('summary.json', {'openwrt': release.decode(), 'passed': self.results,
                                   'not_covered': ['wireless and hardware acceleration (VM has neither)',
