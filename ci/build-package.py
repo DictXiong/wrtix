@@ -35,6 +35,14 @@ def version():
     return value
 
 
+def sdk_package_version(dumped, release):
+    version_match = re.search(r'(?m)^[ \t]*version:[ \t]*(\S+)[ \t]*$', dumped)
+    expected_version = re.sub(r'-(alpha|beta|rc)\.', r'_\1', release)
+    if not version_match or not re.fullmatch(re.escape(expected_version) + r'-r[1-9][0-9]*', version_match[1]):
+        raise RuntimeError('SDK package version differs from VERSION')
+    return version_match[1]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', required=True, type=Path)
@@ -96,7 +104,7 @@ def main():
     finally:
         key.unlink(missing_ok=True)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    package_version = re.sub(r'-(alpha|beta|rc)\.', r'_\1', release) + '-r1'
+    package_version = sdk_package_version(dumped, release)
     metadata = {
         'schema_version': 1, 'version': release, 'package_version': package_version,
         'source_revision': revision, 'openwrt_release': PIN['release'],

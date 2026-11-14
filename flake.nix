@@ -127,6 +127,7 @@
               ''
                 export PYTHONDONTWRITEBYTECODE=1
                 python3 ${self}/tests/test_package_backup.py
+                python3 ${self}/tests/test_package_metadata.py
                 touch "$out"
               '';
           package = self.packages.${system}.wrtix;
