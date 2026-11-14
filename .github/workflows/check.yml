@@ -61,6 +61,7 @@ jobs:
             ${{ runner.temp }}/wrtix-vm/guest/console.log
             ${{ runner.temp }}/wrtix-vm/guest/qemu.log
             ${{ runner.temp }}/wrtix-vm/last-command.stderr
+            ${{ runner.temp }}/wrtix-vm/controller/failure.json
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [check, package, vm]

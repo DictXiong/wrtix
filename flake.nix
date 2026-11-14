@@ -85,6 +85,7 @@
                 python3 ${self}/tests/test_controller.py
                 python3 ${self}/tests/test_controller_inherited.py
                 python3 ${self}/tests/test_workflows.py
+                python3 ${self}/tests/test_vm_diagnostics.py
                 touch "$out"
               '';
           target =

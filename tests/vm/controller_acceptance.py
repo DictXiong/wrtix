@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import pty
+import re
 import select
 from pathlib import Path
 import shlex
@@ -24,6 +25,26 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src/wrtix'))
 import compiler
+import openwrt
+
+
+# Only fixed protocol errors and lifecycle fields can enter public CI diagnostics.
+# Full stderr, manifests, receipts and checker input stay in the private workdir.
+REBOOT_ERRORS = frozenset((
+    "target reboot not verified; automatic rollback remains armed",
+    "transaction rolled back or service activation failed",
+    "automatic confirmation refused: readback differs",
+    "operation failed; details suppressed to protect secrets",
+))
+
+
+def failure_summary(name, action, result):
+    stderr = result.stderr.decode("utf-8", "replace")
+    remote = re.findall(r"remote operation failed: ([a-z_]+)", stderr)
+    messages = re.findall(r"^openwrt-deploy: (.+)$", stderr, re.MULTILINE)
+    return {"case": name, "action": action, "returncode": result.returncode,
+            "agent_errors": sorted(set(remote) & openwrt.REMOTE_ERROR_CODES),
+            "controller_errors": sorted(set(messages) & REBOOT_ERRORS)}
 
 
 class Acceptance:
@@ -109,6 +130,27 @@ class Acceptance:
         self.save(name + '.stdout', result.stdout)
         self.save(name + '.stderr', result.stderr)
         if result.returncode != expected:
+            diagnostic = failure_summary(name, action, result)
+            try:
+                probe = self.remote('/usr/libexec/wrtix/agent status', check=False)
+                if probe.returncode:
+                    raise ValueError('status unavailable')
+                status = json.loads(probe.stdout)
+                fields = {
+                    'state': {'absent', 'staged', 'applied', 'confirmed', 'rolled-back',
+                              'rollback_pending', 'rollback_incomplete', 'reload_failed'},
+                    'reboot_state': {'required', 'armed', 'awaiting-resume', 'resumed'},
+                }
+                diagnostic['target'] = {key: status[key] for key, values in fields.items()
+                                        if status.get(key) in values}
+                for key, kind in (('reload_complete', bool), ('reboot_required', bool),
+                                  ('now', int), ('deadline', int)):
+                    if type(status.get(key)) is kind:
+                        diagnostic['target'][key] = status[key]
+            except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+                diagnostic['status_available'] = False
+            self.save('failure.json', diagnostic)
+            print('FAIL ' + json.dumps(diagnostic, sort_keys=True), flush=True)
             raise RuntimeError(name + ' returned ' + str(result.returncode) + '; inspect private stderr')
         return json.loads(result.stdout) if result.stdout.strip() and expected == 0 else result
 
