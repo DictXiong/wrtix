@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=wrtix-agent
 WRTIX_VERSION:=$(strip $(shell cat $(WRTIX_SOURCE_DIR)/VERSION))
 PKG_VERSION:=$(subst -rc.,_rc,$(subst -beta.,_beta,$(subst -alpha.,_alpha,$(WRTIX_VERSION))))
-PKG_RELEASE:=2
+PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/package.mk
