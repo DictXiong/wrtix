@@ -18,7 +18,7 @@ import failure_snapshot
 
 
 class PackageDiagnostic(unittest.TestCase):
-    def invoke(self, directory, acceptance, capture, stop, snapshot_seconds=None):
+    def invoke(self, directory, acceptance, capture, stop, snapshot_seconds=None, cpu_localization=False):
         art = directory / 'art'; art.mkdir()
         (art / 'test.apk').write_bytes(b'synthetic-package')
         (art / 'test.pem').write_text('synthetic-public-key')
@@ -34,6 +34,8 @@ class PackageDiagnostic(unittest.TestCase):
                 '--image', str(directory / 'image'), '--accel', 'tcg', '--case', 'mac-reboot']
         if snapshot_seconds is not None:
             args.extend(['--failure-snapshot-seconds', str(snapshot_seconds)])
+        if cpu_localization:
+            args.append('--cpu-localization')
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(sys, 'argv', args))
             stack.enter_context(patch.object(runner.machine, 'prepare'))
@@ -104,6 +106,33 @@ class PackageDiagnostic(unittest.TestCase):
                     runner.main()
         self.assertEqual(caught.exception.code, 2)
         prepare.assert_not_called()
+
+    def test_failed_witness_does_not_authorize_a_stale_disk_symbol_map(self):
+        import reboot_witness
+        original = RuntimeError('synthetic-original-failure')
+        acceptance = Mock(); capture = Mock(return_value={'synthetic':True}); stop = Mock()
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            def case():
+                vm = directory / 'run/guest'; vm.mkdir()
+                (vm / 'cpu-witness.private.json').write_text('{"available":true,"symbol_entries":["stale"]}')
+                acceptance.reboot_witness('planned-reboot','01234567-89ab-cdef-0123-456789abcdef')
+                raise original
+            acceptance.run_mac_diagnostic.side_effect = case
+            with patch.object(reboot_witness,'capture',return_value={'available':False}):
+                with self.assertRaises(RuntimeError) as caught:
+                    self.invoke(directory,acceptance,capture,stop,snapshot_seconds=30,cpu_localization=True)
+            self.assertIs(caught.exception,original)
+            active = capture.call_args.kwargs['cpu_witness']
+            self.assertFalse(active['available']); self.assertNotIn('symbol_entries',active)
+        stop.assert_called_once()
+
+    def test_cpu_localization_rejects_unscoped_budget(self):
+        args=['fixture','--artifacts','/unused','--directory','/unused','--case','mac-reboot','--cpu-localization']
+        with patch.object(sys,'argv',args), contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(runner.machine,'prepare') as prepare:
+                with self.assertRaises(SystemExit) as caught:runner.main()
+        self.assertEqual(caught.exception.code,2);prepare.assert_not_called()
 
     def test_cleanup_failure_without_case_failure_is_not_success(self):
         error = OSError('cleanup failed')

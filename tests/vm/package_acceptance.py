@@ -39,10 +39,14 @@ def main():
     parser.add_argument('--case', choices=('full', 'mac-reboot'), default='full')
     parser.add_argument('--failure-snapshot-seconds', type=int, choices=(7, 30), default=7,
                         help='Failure-only observation budget; 30 seconds is limited to the MAC diagnostic')
+    parser.add_argument('--cpu-localization', action='store_true',
+                        help='Read-only preboot symbol witness and failure CPU samples in the MAC diagnostic')
     parser.add_argument('--accel', choices=('kvm', 'tcg'), help='Override automatic acceleration selection')
     args = parser.parse_args()
     if args.failure_snapshot_seconds != 7 and args.case != 'mac-reboot':
         parser.error('extended failure snapshots require --case mac-reboot')
+    if args.cpu_localization and (args.case != 'mac-reboot' or args.failure_snapshot_seconds != 30):
+        parser.error('CPU localization requires --case mac-reboot --failure-snapshot-seconds 30')
     artifacts, work = args.artifacts.resolve(), args.directory.resolve()
     if work.exists():
         parser.error('directory must not exist; this test creates a disposable VM')
@@ -62,6 +66,7 @@ def main():
     machine.prepare(vm, image)
     machine.start(vm, 22080, 22081, accel=args.accel)
     passed = []
+    cpu_witness = {} if args.cpu_localization else None
 
     def remote(command, data=None, check=True):
         result = subprocess.run(machine.ssh_args(vm) + [command], input=data, capture_output=True, timeout=180)
@@ -110,6 +115,25 @@ def main():
         acceptance = Acceptance(argparse.Namespace(
             key=vm / 'identity', known_hosts=vm / 'known_hosts', output=work / 'controller',
             host='127.0.0.1', alternate_host='127.0.0.2', port=22080))
+        if args.cpu_localization:
+            from reboot_witness import capture
+            def witness(case, boot):
+                # Clear in memory before any I/O; a stale disk file cannot enable mapping.
+                cpu_witness.clear()
+                cpu_witness.update({'available': False, 'case': case, 'reason': 'preboot_witness_unavailable'})
+                try:
+                    public = capture(acceptance, vm, case, boot)
+                    if public.get('available') is not True:
+                        return
+                    active = json.loads((vm / 'cpu-witness.private.json').read_text())
+                    if (not isinstance(active, dict) or active.get('case') != case or active.get('boot_id') != boot
+                            or active.get('available') is not True
+                            or active.get('symbol_table_sha256') != public.get('symbol_table_sha256')):
+                        return
+                    cpu_witness.update(active)
+                except (OSError, ValueError, TypeError):
+                    pass
+            acceptance.reboot_witness = witness
         if args.case == 'mac-reboot':
             acceptance.run_mac_diagnostic()
             summary = {'openwrt': machine.PIN['release'], 'case': 'mac-reboot',
@@ -160,7 +184,7 @@ def main():
     except BaseException:
         # The failure is already final. Capture before cleanup without masking it.
         with capture_on_failure(vm, work / 'failure-snapshot.json',
-                                budget_seconds=args.failure_snapshot_seconds):
+                                budget_seconds=args.failure_snapshot_seconds, cpu_witness=cpu_witness):
             raise
     finally:
         stop_vm(vm, preserve_failure=sys.exc_info()[0] is not None)

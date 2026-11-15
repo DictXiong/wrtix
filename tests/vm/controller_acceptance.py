@@ -58,6 +58,7 @@ class Acceptance:
                     '-o', 'ConnectTimeout=3', '-o', 'UserKnownHostsFile=' + str(args.known_hosts.resolve()),
                     '-o', 'StrictHostKeyChecking=yes']
         self.results = []
+        self.reboot_witness = None
 
     def remote(self, command, *, host=None, data=None, check=True, timeout=40):
         result = subprocess.run([*self.ssh, 'root@' + (host or self.host), command], input=data,
@@ -296,6 +297,8 @@ class Acceptance:
         changed_mac['target_host'] = self.host
         changed_mac['uci']['network']['lan']['options']['macaddr'] = '02:00:00:00:00:27'
         before_boot = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)['boot_id']
+        if getattr(self, 'reboot_witness', None):
+            self.reboot_witness('planned-reboot', before_boot)
         self.command('deploy', changed_mac, name='planned-reboot', options=(
             '--receipt', self.receipt('planned-reboot'), '--ttl', '300', '--auto-confirm'))
         after = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
@@ -303,6 +306,8 @@ class Acceptance:
         assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == b'02:00:00:00:00:27'
         self.passed('MAC change requires authenticated reboot and resumes original transaction')
         restore['target_host'] = self.host
+        if getattr(self, 'reboot_witness', None):
+            self.reboot_witness('restore-mac', after['boot_id'])
         self.command('deploy', restore, name='restore-mac', options=(
             '--receipt', self.receipt('restore-mac'), '--ttl', '300', '--auto-confirm'))
         restored_identity = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)

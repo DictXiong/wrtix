@@ -528,7 +528,7 @@ def _ssh(directory, deadline):
         return {"available": False, "reason": "ssh_unavailable"}
 
 
-def snapshot(directory, budget_seconds=7):
+def snapshot(directory, budget_seconds=7, *, cpu_witness=None):
     """Failure-only observations share one absolute deadline; no repair or confirm."""
     started = time.monotonic()
     report = {"schema_version": 2}
@@ -548,6 +548,9 @@ def snapshot(directory, budget_seconds=7):
         observe("console_before", _console_evidence, directory)
         observe("host_process_before", _host_process, directory)
         observe("qmp", _qmp, directory, min(deadline, time.monotonic() + 2))
+        if cpu_witness is not None:
+            from cpu_localization import sample
+            observe('cpu_localization', sample, directory, deadline, cpu_witness)
         observe("hostfwd", _hostfwd, directory, min(deadline, time.monotonic() + 2.1))
         observe("ssh", _ssh, directory, min(deadline, time.monotonic() + 4))
         observe("serial", _serial, directory, deadline)
@@ -567,13 +570,13 @@ def snapshot(directory, budget_seconds=7):
 
 
 @contextmanager
-def capture_on_failure(directory, output, budget_seconds=7):
+def capture_on_failure(directory, output, budget_seconds=7, *, cpu_witness=None):
     """Keep the original exception even when capture or output writing fails."""
     try:
         yield
     except BaseException:
         try:
-            report = snapshot(directory, budget_seconds)
+            report = snapshot(directory, budget_seconds) if cpu_witness is None else snapshot(directory, budget_seconds, cpu_witness=cpu_witness)
             fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as stream:
                 json.dump(report, stream, indent=2)

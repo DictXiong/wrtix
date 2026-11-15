@@ -152,3 +152,22 @@ include network/carrier/routes, SSH listening, necessary process and guard state
 raw console lines, complete arguments, credentials and marker contents are never
 published. Lock observations remain inode candidates, not proof of ownership or
 deadlock. This observer performs no resume, confirmation, repair or reboot.
+
+## x86 reboot localization
+
+The opt-in MAC diagnostic additionally accepts `--cpu-localization` with the
+30-second failure budget. Before each protected reboot and before its lease
+starts, it records the authenticated boot UUID, kernel GNU build-id and actual
+KASLR text offset. The complete live symbol table stays in the private VM work
+directory; only identity/hash/range metadata is included in
+`controller/reboot-witnesses.json`. A failed witness never authorizes reuse of an
+older map and does not change the original case criteria.
+
+After an already failed case, read-only QMP/HMP obtains two bounded samples of
+all vCPUs using their queried indices and thread IDs. Only PC, CS, control/mode
+registers and halted state are retained. CPU reply indices must agree; samples
+are not globally atomic. Physical firmware matches require disabled paging and
+the actual CPU-memory FlatView ROM ranges. Kernel matches identify addresses in
+the preboot symbol map, not proof of the same startup instance. Unsupported or
+unavailable commands remain explicit. No pause/reset, memory dump, repair or
+late confirmation is performed; the original failure and cleanup are preserved.

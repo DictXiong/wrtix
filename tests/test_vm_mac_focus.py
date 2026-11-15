@@ -75,7 +75,12 @@ class FocusedMAC(unittest.TestCase):
 
     def test_same_address_prefix_and_two_guarded_mac_boots_with_original_budgets(self):
         probe = Probe(self.args)
+        witness_points = []
+        probe.reboot_witness = lambda case, boot: witness_points.append((case, boot, [call[2] for call in probe.calls]))
         result = probe.run_mac_diagnostic()
+        self.assertEqual(witness_points, [
+            ('planned-reboot', 'boot0', ['initialize','handoff','handoff-confirm','restore-address']),
+            ('restore-mac', 'boot1', ['initialize','handoff','handoff-confirm','restore-address','planned-reboot'])])
         self.assertEqual([c[2] for c in probe.calls],
                          ["initialize", "handoff", "handoff-confirm", "restore-address", "planned-reboot", "restore-mac"])
         self.assertIn("StrictHostKeyChecking=yes", probe.ssh)
