@@ -41,6 +41,15 @@ pending-transaction package fences, and the controller acceptance above. Raw VM
 credentials and receipts are not published. This suite requires networking and
 virtualization and remains outside `nix flake check`.
 
+The normal complete VM job enables bounded MAC-failure observation. Only a
+currently active MAC case with authenticated, matching preboot identity receives
+the extended 30-second CPU/console snapshot after failure; other failures retain
+seven seconds without a previous CPU map. Observation cannot confirm a
+transaction, extend its lease or turn a late recovery into a pass. The same mock
+regressions run under `nix flake check`; their execution does not start a VM.
+Public artifacts contain only explicitly selected structured results. See the
+[VM harness guide](../tests/vm/README.md) for channels and privacy constraints.
+
 The architecture-independent local helper APK is not an SDK build. Full image
 compilation, sysupgrade across firmware versions, physical radio performance,
 VLAN/PPE behavior and consumer-specific roaming tests remain separate downstream

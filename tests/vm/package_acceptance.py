@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -31,12 +32,77 @@ def stop_vm(vm, *, preserve_failure=False):
             pass
 
 
+def install_mac_observer(acceptance, vm, *, include_cpu):
+    """Bind optional observations to this exact pre-lease context in memory."""
+    from reboot_witness import capture
+    record = {}
+
+    def witness(case, boot):
+        record.clear()  # Never authorize observation from a prior case or disk file.
+        context = acceptance.mac_failure_context
+        if (not isinstance(context, dict) or context.get('case') != case
+                or context.get('boot_id') != boot or context.get('transaction_started') is not False
+                or case not in ('planned-reboot', 'restore-mac')
+                or not isinstance(boot, str)
+                or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', boot)):
+            return
+        try:
+            public = capture(acceptance, vm, case, boot)
+            if (not isinstance(public, dict) or public.get('case') != case
+                    or public.get('expected_boot_id') != boot
+                    or public.get('reason') == 'witness_boot_changed'
+                    or any(not isinstance(public.get(key), dict)
+                           or public[key].get('boot_id') != boot for key in ('boot_before', 'boot_after'))):
+                return
+            # Symbol capability and boot identity are separate. Missing kallsyms
+            # still permits raw read-only CPU observations of this bound MAC case.
+            if type(public.get('available')) is not bool:
+                return
+            if not include_cpu or public['available'] is False:
+                record.update(context=context, case=case, boot_id=boot,
+                              cpu_witness={'available': False, 'case': case})
+                return
+            digest = public.get('symbol_table_sha256')
+            if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                return
+            active = json.loads((vm / 'cpu-witness.private.json').read_text())
+            if (not isinstance(active, dict) or active.get('case') != case or active.get('boot_id') != boot
+                    or active.get('expected_boot_id') != boot or active.get('available') is not True
+                    or active.get('symbol_table_sha256') != digest
+                    or any(active.get(key) != public[key] for key in ('boot_before', 'boot_after'))):
+                return
+            # Only the witness reader's defined CPU-map fields cross this boundary.
+            fields = ('available', 'case', 'boot_id', 'kernel', 'kernel_text', 'symbol_entries',
+                      'symbols', 'symbols_complete', 'symbol_table_sha256', 'kernel_notes_sha256', 'kaslr_slide')
+            record.update(context=context, case=case, boot_id=boot,
+                          cpu_witness={key: active[key] for key in fields if key in active})
+        except Exception:
+            # Optional observation cannot change acceptance or transaction semantics.
+            pass
+
+    acceptance.reboot_witness = witness
+    return record
+
+
+def failure_observation(acceptance, record, *, enabled, include_cpu):
+    """No I/O: select the extended budget only for the current witnessed MAC case."""
+    context = getattr(acceptance, 'mac_failure_context', None)
+    if (not enabled or not isinstance(context, dict) or not isinstance(record, dict)
+            or context.get('case') not in ('planned-reboot', 'restore-mac')
+            or context.get('transaction_started') is not True or record.get('context') is not context
+            or record.get('case') != context.get('case') or record.get('boot_id') != context.get('boot_id')):
+        return 7, None
+    return 30, record['cpu_witness'] if include_cpu else None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', required=True, type=Path)
     parser.add_argument('--directory', required=True, type=Path)
     parser.add_argument('--image', type=Path)
     parser.add_argument('--case', choices=('full', 'mac-reboot'), default='full')
+    parser.add_argument('--observe-mac-failures', action='store_true',
+                        help='Observe only failed, preboot-witnessed MAC cases for up to 30 seconds; never changes the selected suite')
     parser.add_argument('--failure-snapshot-seconds', type=int, choices=(7, 30), default=7,
                         help='Failure-only observation budget; 30 seconds is limited to the MAC diagnostic')
     parser.add_argument('--cpu-localization', action='store_true',
@@ -66,7 +132,10 @@ def main():
     machine.prepare(vm, image)
     machine.start(vm, 22080, 22081, accel=args.accel)
     passed = []
-    cpu_witness = {} if args.cpu_localization else None
+    acceptance = None
+    observation = None
+    observe_mac = args.observe_mac_failures or args.failure_snapshot_seconds == 30
+    include_cpu = args.observe_mac_failures or args.cpu_localization
 
     def remote(command, data=None, check=True):
         result = subprocess.run(machine.ssh_args(vm) + [command], input=data, capture_output=True, timeout=180)
@@ -115,25 +184,8 @@ def main():
         acceptance = Acceptance(argparse.Namespace(
             key=vm / 'identity', known_hosts=vm / 'known_hosts', output=work / 'controller',
             host='127.0.0.1', alternate_host='127.0.0.2', port=22080))
-        if args.cpu_localization:
-            from reboot_witness import capture
-            def witness(case, boot):
-                # Clear in memory before any I/O; a stale disk file cannot enable mapping.
-                cpu_witness.clear()
-                cpu_witness.update({'available': False, 'case': case, 'reason': 'preboot_witness_unavailable'})
-                try:
-                    public = capture(acceptance, vm, case, boot)
-                    if public.get('available') is not True:
-                        return
-                    active = json.loads((vm / 'cpu-witness.private.json').read_text())
-                    if (not isinstance(active, dict) or active.get('case') != case or active.get('boot_id') != boot
-                            or active.get('available') is not True
-                            or active.get('symbol_table_sha256') != public.get('symbol_table_sha256')):
-                        return
-                    cpu_witness.update(active)
-                except (OSError, ValueError, TypeError):
-                    pass
-            acceptance.reboot_witness = witness
+        if observe_mac:
+            observation = install_mac_observer(acceptance, vm, include_cpu=include_cpu)
         if args.case == 'mac-reboot':
             acceptance.run_mac_diagnostic()
             summary = {'openwrt': machine.PIN['release'], 'case': 'mac-reboot',
@@ -182,9 +234,14 @@ def main():
                                    'firmware sysupgrade']}
         (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     except BaseException:
-        # The failure is already final. Capture before cleanup without masking it.
+        # The failure is already final. Selection and capture cannot mask it.
+        try:
+            budget, cpu = failure_observation(acceptance, observation,
+                                             enabled=observe_mac, include_cpu=include_cpu)
+        except BaseException:
+            budget, cpu = 7, None
         with capture_on_failure(vm, work / 'failure-snapshot.json',
-                                budget_seconds=args.failure_snapshot_seconds, cpu_witness=cpu_witness):
+                                budget_seconds=budget, cpu_witness=cpu):
             raise
     finally:
         stop_vm(vm, preserve_failure=sys.exc_info()[0] is not None)

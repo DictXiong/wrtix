@@ -86,7 +86,7 @@ Linux build prerequisites, curl, zstd and OpenSSL. The VM runner downloads and
 checks the pinned image, trusts only the artifact's accompanying public key,
 installs without `--allow-untrusted`, exercises the controller and package gates,
 and stops its VM on exit. It writes a non-secret `summary.json` alongside private
-VM state. CI publishes only the summary and explicitly selected boot diagnostics;
+VM state. CI publishes only the summary and explicitly selected structured diagnostics;
 never upload the whole working directory.
 The public failure summary retains only known protocol errors and lifecycle fields.
 Its status snapshot is taken after the command fails; it is not evidence of the
@@ -114,29 +114,18 @@ only validated fields; missing channels remain unavailable. Original errors and
 nonzero exits survive snapshot or cleanup failure. This does not repair the guest
 or relax the acceptance criteria.
 
-The existing **Checks and packages** workflow also exposes a default-off
-`mac_reboot_diagnostic` manual input. On a `diagnostic/**` branch, dispatch once:
+The normal CI VM job runs the complete suite with `--observe-mac-failures`.
+This default-off option extends failure-only observation to at most 30 seconds
+only while a current MAC transaction is active and its authenticated preboot
+identity is bound to the in-memory witness. Other full-suite failures keep the
+seven-second budget without a previous CPU symbol map. Successful MAC cases
+clear their observation context before later package lifecycle tests.
 
-```sh
-gh workflow run check.yml --ref diagnostic/example -f mac_reboot_diagnostic=true
-```
-
-Diagnostic branch pushes do not start the normal build jobs. A normal dispatch
-without this input, main/other branch pushes, pull requests and tag builds retain
-their existing gates. Diagnostic mode downloads the fixed signed SDK artifact
-from run `43657030654`, verifies its APK/key/index/metadata hashes and the pinned
-image, and runs only the focused TCG case on Ubuntu 24.04. It neither rebuilds
-packages nor publishes a release. The original package source and new harness
-revision are recorded separately, along with the actual runner/QEMU versions.
-The published diagnostic artifact contains only explicitly listed result fields;
-private VM state, receipts, manifests, raw console and command logs are excluded.
-A successful diagnostic does not amend a historical failed run or prove a fix.
-
-The manual MAC diagnostic opts into `--failure-snapshot-seconds 30`: only after
-an already failed case, up to 30 seconds are available for independent read-only
-guest observation. Normal acceptance keeps its seven-second budget. Controller
-wait240, transaction TTL300 and confirmation/rollback assertions are unchanged;
-late recovery during observation never changes the failed case to a pass.
+Controller wait240, transaction TTL300 and all confirmation/rollback assertions
+are unchanged. Observations start only after the original failure and never
+late-confirm or turn a recovered guest into a passing case. Diagnostic branch
+pushes remain excluded from builds; normal manual, branch, pull-request and tag
+runs retain the complete release gates and build their own package.
 
 The failure snapshot separates evidence sources: bounded existing-console boot
 milestones, passive live serial, QMP status, owned host QEMU CPU observations,
@@ -155,8 +144,8 @@ deadlock. This observer performs no resume, confirmation, repair or reboot.
 
 ## x86 reboot localization
 
-The opt-in MAC diagnostic additionally accepts `--cpu-localization` with the
-30-second failure budget. Before each protected reboot and before its lease
+The focused MAC diagnostic accepts `--cpu-localization` with the 30-second
+failure budget; full acceptance opts in through `--observe-mac-failures`. Before each protected reboot and before its lease
 starts, it records the authenticated boot UUID, live symbols and, when available,
 the kernel GNU build-id. The fixed-ELF KASLR offset requires that build-id to match. The complete live symbol table stays in the private VM work
 directory; only identity/hash/range metadata is included in
@@ -165,22 +154,12 @@ older map and does not change the original case criteria.
 
 After an already failed case, read-only QMP/HMP obtains two bounded samples of
 all vCPUs using their queried indices and thread IDs. Only PC, CS, control/mode
-registers and halted state are retained. CPU reply indices must agree; samples
+registers, A20, DS/ES address context and halted state are retained. CPU reply indices must agree; samples
 are not globally atomic. Physical firmware matches require disabled paging and
 the actual CPU-memory FlatView ROM ranges. Kernel matches identify addresses in
 the preboot symbol map, not proof of the same startup instance. Unsupported or
 unavailable commands remain explicit. No pause/reset, memory dump, repair or
 late confirmation is performed; the original failure and cleanup are preserved.
-
-## Ordinary reboot control
-
-The default-off manual `ordinary_reboot_control` input reuses the diagnostic job
-for one fresh, agent-free VM. It keeps the pinned image, TCG384MiB/2CPU and final
-management/MAC configuration, commits the candidate MAC without a network reload,
-and invokes ordinary `/sbin/reboot` once. There is no package installation,
-enrollment, configuration transaction or transaction TTL. A result is explicitly
-`PASS_CONTROL_ONLY` or `FAIL_CONTROL_ONLY`; it does not override an earlier
-transaction failure or satisfy the normal release gates.
 
 For a specific fixed-image GRUB copy-stub candidate PC, the failed-VM observer can
 compare exactly32 bytes at its known RAM address with a normalized opcode

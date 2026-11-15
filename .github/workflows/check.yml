@@ -5,15 +5,6 @@ on:
     tags: ['**']
   pull_request:
   workflow_dispatch:
-    inputs:
-      mac_reboot_diagnostic:
-        description: 'Only diagnose the fixed v1.1.0 MAC reboot case; do not build or release'
-        type: boolean
-        default: false
-      ordinary_reboot_control:
-        description: 'Only run one agent-free ordinary reboot control in the pinned VM'
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -21,14 +12,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
-    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
       - run: nix flake check --show-trace
   package:
-    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -45,7 +34,6 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
   vm:
-    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -60,163 +48,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 e2fsprogs openssh-client python3-yaml curl
       - name: Accept SDK package and transaction lifecycle
-        run: python3 tests/vm/package_acceptance.py --artifacts artifacts --directory "$RUNNER_TEMP/wrtix-vm"
+        run: python3 tests/vm/package_acceptance.py --artifacts artifacts --directory "$RUNNER_TEMP/wrtix-vm" --observe-mac-failures
       - uses: actions/upload-artifact@v4
         with:
           name: official-openwrt-acceptance
           path: ${{ runner.temp }}/wrtix-vm/summary.json
           if-no-files-found: error
-      - name: Retain non-secret VM boot diagnostics on failure
+      - name: Retain structured VM diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: vm-boot-diagnostics
           path: |
-            ${{ runner.temp }}/wrtix-vm/guest/console.log
-            ${{ runner.temp }}/wrtix-vm/guest/qemu.log
-            ${{ runner.temp }}/wrtix-vm/last-command.stderr
+            ${{ runner.temp }}/wrtix-vm/controller/results.json
+            ${{ runner.temp }}/wrtix-vm/controller/reboot-witnesses.json
             ${{ runner.temp }}/wrtix-vm/controller/failure.json
             ${{ runner.temp }}/wrtix-vm/failure-snapshot.json
             ${{ runner.temp }}/wrtix-vm/cleanup-error.json
-  mac-reboot-diagnostic:
-    if: github.event_name == 'workflow_dispatch' && (inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    env:
-      WRTIX_REBOOT_CONTROL: ${{ inputs.ordinary_reboot_control }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Reuse the original failed tag's signed SDK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: openwrt-25.12-apk
-          path: artifacts
-          repository: DictXiong/wrtix
-          run-id: 43657030654
-          github-token: ${{ github.token }}
-      - name: Install official VM test prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 e2fsprogs openssh-client python3-yaml curl
-      - name: Verify fixed inputs and record the actual runner
-        run: |
-          python3 - <<'PYCODE'
-          import hashlib, json, os, pathlib, platform, subprocess
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'wrtix-mac-diagnostic'
-          public = root / 'public'
-          public.mkdir(mode=0o700, parents=True)
-          expected = {
-              'wrtix-agent-1.1.0-r1.apk': 'a9ed4d3f105f08454b6539de4d2de11fcefd2164cf07e9c6b11eed32f6221e99',
-              'wrtix-v1.1.0.pem': 'c43fd8d6ed9108077da3f62f974c766f7a2d700b7eebabe88b6a5cdcbb445a1c',
-              'packages.adb': 'aa6fb3a4696df6e498d9a935d13f5660626dd11349018ec02d0cd1d7cb9b9565',
-              'release.json': '3792384ec6de15ee02e76ace0d5271a8ec6d7b33d335ec3779c1ee8b356bb8fe',
-          }
-          for name, digest in expected.items():
-              if hashlib.sha256((pathlib.Path('artifacts') / name).read_bytes()).hexdigest() != digest:
-                  raise RuntimeError('fixed original SDK artifact checksum mismatch: ' + name)
-          metadata = json.loads(pathlib.Path('artifacts/release.json').read_text())
-          if metadata['source_revision'] != '88007ea9199ff4bdc8ea12114353473420fd4d34':
-              raise RuntimeError('original SDK source revision mismatch')
-          pin = json.loads(pathlib.Path('tests/vm/image.json').read_text())
-          if pin['sha256'] != '7f33f26f89a7096aa549ec45aa80e07577a3e69c725772a5fa4b8c18df38aeaa':
-              raise RuntimeError('official image pin changed')
-          image = root / 'openwrt.img.gz'
-          subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--output', str(image), pin['url']], check=True)
-          if hashlib.sha256(image.read_bytes()).hexdigest() != pin['sha256']:
-              raise RuntimeError('official image checksum mismatch')
-          control = os.environ.get('WRTIX_REBOOT_CONTROL') == 'true'
-          inputs = {'harness_revision': os.environ['GITHUB_SHA'], 'SDK_run': 43657030654,
-                    'SDK_source_revision': metadata['source_revision'], 'artifact_sha256': expected,
-                    'image_sha256': pin['sha256'], 'case': 'ordinary-reboot-control' if control else 'mac-reboot', 'accel': 'tcg',
-                    'memory_MiB': 384, 'vCPUs': 2, 'MAC_TTL': None if control else 300, 'controller_wait': 240, 'failure_snapshot_seconds': 30,
-                    'cpu_localization': True, 'agent_package_installed': not control,
-                    'SDK_artifact_reference_only': control}
-          environment = {'runner_OS': os.environ.get('RUNNER_OS'), 'image_OS': os.environ.get('ImageOS'),
-                         'image_version': os.environ.get('ImageVersion'), 'kernel': platform.release(),
-                         'arch': platform.machine(), 'QEMU': subprocess.check_output(['qemu-system-x86_64', '--version'], text=True).splitlines()[0],
-                         'qemu_package': subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'qemu-system-x86'], text=True),
-                         'original_CI_qemu_package': '1:8.2.2+ds-0ubuntu1.18',
-                         'identical_host_environment_proven': False}
-          for name, value in [('inputs.json', inputs), ('environment.json', environment)]:
-              (public / name).write_text(json.dumps(value, indent=2) + '\n')
-              print(json.dumps(value, sort_keys=True))
-          PYCODE
-      - name: Run the one bounded MAC diagnostic
-        run: |
-          python3 -u - <<'PYCODE'
-          import json, os, pathlib, runpy, sys
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'wrtix-mac-diagnostic'
-          public, work = root / 'public', root / 'run'
-          sys.path.insert(0, str(pathlib.Path('tests/vm').resolve()))
-          import machine
-          original_start, started = machine.start, {}
-          def record_start(directory, *args, **kwargs):
-              original_start(directory, *args, **kwargs)
-              started.update(json.loads((directory / 'machine.json').read_text()))
-              (public / 'VM-START.json').write_text(json.dumps(started, indent=2) + '\n')
-          machine.start = record_start
-          control = os.environ.get('WRTIX_REBOOT_CONTROL') == 'true'
-          if control:
-              script = 'tests/vm/ordinary_reboot_control.py'
-              sys.argv = ['ordinary_reboot_control.py', '--image', str(root / 'openwrt.img.gz'), '--directory', str(work)]
-          else:
-              script = 'tests/vm/package_acceptance.py'
-              sys.argv = ['package_acceptance.py', '--artifacts', 'artifacts', '--image', str(root / 'openwrt.img.gz'),
-                          '--directory', str(work), '--case', 'mac-reboot', '--accel', 'tcg',
-                          '--failure-snapshot-seconds', '30', '--cpu-localization']
-          try:
-              runpy.run_path(script, run_name='__main__')
-          finally:
-              primary_failure = sys.exc_info()[0] is not None
-              fallback_stop_attempted, fallback_stop_failed = False, False
-              if (work / 'guest/machine.json').exists():
-                  fallback_stop_attempted = True
-                  try:
-                      machine.stop(work / 'guest')
-                  except BaseException:
-                      fallback_stop_failed = True
-              try:
-                  alive = False
-                  if started:
-                      try:
-                          fields = pathlib.Path('/proc/' + str(started['pid']) + '/stat').read_text().split()
-                          alive = fields[21] == started['start_ticks'] and fields[2] != 'Z'
-                      except FileNotFoundError:
-                          pass
-                  cleanup = {'VM_started': bool(started), 'owned_QEMU_still_alive': alive,
-                             'machine_json_absent': not (work / 'guest/machine.json').exists(),
-                             'cleanup_error_absent': not (work / 'cleanup-error.json').exists() and not fallback_stop_failed,
-                             'fallback_stop_attempted': fallback_stop_attempted, 'fallback_stop_failed': fallback_stop_failed,
-                             'original_failure_preserved': primary_failure}
-                  cleanup['verified'] = bool(started) and not alive and cleanup['machine_json_absent'] and cleanup['cleanup_error_absent']
-                  (public / 'cleanup.json').write_text(json.dumps(cleanup, indent=2) + '\n')
-                  if not cleanup['verified'] and not primary_failure:
-                      raise RuntimeError('diagnostic cleanup not verified')
-              except BaseException:
-                  if not primary_failure:
-                      raise
-          PYCODE
-      - name: Retain only allowlisted non-secret diagnostic results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-reboot-diagnostic
-          if-no-files-found: error
-          path: |
-            ${{ runner.temp }}/wrtix-mac-diagnostic/public/inputs.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/public/environment.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/public/VM-START.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/public/cleanup.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/summary.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/controller/results.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/controller/summary.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/controller/reboot-witnesses.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/controller/failure.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/failure-snapshot.json
-            ${{ runner.temp }}/wrtix-mac-diagnostic/run/cleanup-error.json
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [check, package, vm]

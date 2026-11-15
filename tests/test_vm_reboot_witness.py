@@ -100,7 +100,7 @@ class RebootWitness(unittest.TestCase):
     def test_missing_notes_preserves_metadata_and_live_symbols_without_ELF_claim(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory=Path(tmp);acceptance=self.fixture(directory,notes_available=False)
-            result=witness.capture(acceptance,directory,'ordinary-reboot',BOOT)
+            result=witness.capture(acceptance,directory,'planned-reboot',BOOT)
             self.assertTrue(result['available'])
             self.assertFalse(result['fixed_ELF_binding']);self.assertNotIn('kaslr_slide',result)
             self.assertEqual(result['reads']['notes']['reason'],'command_nonzero')

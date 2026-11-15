@@ -109,7 +109,7 @@ def capture(acceptance, directory, case, expected_boot_id):
     directory = Path(directory)
     started = time.monotonic()
     deadline = started + 25
-    cases = {'planned-reboot', 'restore-mac', 'ordinary-reboot'}
+    cases = {'planned-reboot', 'restore-mac'}
     valid_boot = isinstance(expected_boot_id, str) and bool(UUID.fullmatch(expected_boot_id))
     public = {'case': case if case in cases else 'invalid_case', 'available': False,
               'expected_boot_id': expected_boot_id if valid_boot else None,

@@ -86,6 +86,13 @@
                 python3 ${self}/tests/test_controller_inherited.py
                 python3 ${self}/tests/test_workflows.py
                 python3 ${self}/tests/test_vm_diagnostics.py
+                python3 ${self}/tests/test_vm_mac_focus.py
+                python3 ${self}/tests/test_vm_package_diagnostic.py
+                python3 ${self}/tests/test_vm_failure_snapshot.py
+                python3 ${self}/tests/test_vm_guest_state_snapshot.py
+                python3 ${self}/tests/test_vm_cpu_localization.py
+                python3 ${self}/tests/test_vm_reboot_witness.py
+                python3 ${self}/tests/test_vm_ci.py
                 touch "$out"
               '';
           target =

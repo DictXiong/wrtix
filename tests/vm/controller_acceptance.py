@@ -59,6 +59,7 @@ class Acceptance:
                     '-o', 'StrictHostKeyChecking=yes']
         self.results = []
         self.reboot_witness = None
+        self.mac_failure_context = None
 
     def remote(self, command, *, host=None, data=None, check=True, timeout=40):
         result = subprocess.run([*self.ssh, 'root@' + (host or self.host), command], input=data,
@@ -268,6 +269,14 @@ class Acceptance:
                                                   'physical device/AP-specific checks']})
         return restore
 
+    def _begin_mac_case(self, case, boot_id):
+        # Capture before taking a lease. Only the ensuing transaction and its
+        # boot/MAC assertions may retain this context for failure observation.
+        self.mac_failure_context = {'case': case, 'boot_id': boot_id, 'transaction_started': False}
+        if self.reboot_witness:
+            self.reboot_witness(case, boot_id)
+        self.mac_failure_context['transaction_started'] = True
+
     def _address_and_mac_reboots(self, original_network, original_mac):
         network = compiler.parse_uci(original_network)
         network['lan']['options']['ipaddr'] = '10.0.2.16'
@@ -297,22 +306,22 @@ class Acceptance:
         changed_mac['target_host'] = self.host
         changed_mac['uci']['network']['lan']['options']['macaddr'] = '02:00:00:00:00:27'
         before_boot = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)['boot_id']
-        if getattr(self, 'reboot_witness', None):
-            self.reboot_witness('planned-reboot', before_boot)
+        self._begin_mac_case('planned-reboot', before_boot)
         self.command('deploy', changed_mac, name='planned-reboot', options=(
             '--receipt', self.receipt('planned-reboot'), '--ttl', '300', '--auto-confirm'))
         after = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
         assert after['boot_id'] != before_boot
         assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == b'02:00:00:00:00:27'
+        self.mac_failure_context = None
         self.passed('MAC change requires authenticated reboot and resumes original transaction')
         restore['target_host'] = self.host
-        if getattr(self, 'reboot_witness', None):
-            self.reboot_witness('restore-mac', after['boot_id'])
+        self._begin_mac_case('restore-mac', after['boot_id'])
         self.command('deploy', restore, name='restore-mac', options=(
             '--receipt', self.receipt('restore-mac'), '--ttl', '300', '--auto-confirm'))
         restored_identity = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
         assert restored_identity['boot_id'] != after['boot_id']
         assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == original_mac
+        self.mac_failure_context = None
         self.passed('original network and MAC restored through second guarded reboot')
         return copy.deepcopy(restore)
 

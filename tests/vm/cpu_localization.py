@@ -288,7 +288,7 @@ def locate(fields, witness=None, rom=None):
 def _witness_summary(witness):
     """Publish identity metadata only, not the complete symbol table."""
     case = witness.get('case') if isinstance(witness, dict) else None
-    case_metadata = {'case': case} if case in ('planned-reboot', 'restore-mac', 'ordinary-reboot') else {}
+    case_metadata = {'case': case} if case in ('planned-reboot', 'restore-mac') else {}
     if not isinstance(witness, dict) or witness.get('available') is not True:
         return {'available': False, 'reason': 'pre_failure_witness_unavailable', **case_metadata}
     result = {'available': True, **case_metadata, 'symbol_basis': 'pre_failure_boot_only', 'boot_continuity_proven': False}

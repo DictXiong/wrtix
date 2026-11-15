@@ -76,7 +76,11 @@ class FocusedMAC(unittest.TestCase):
     def test_same_address_prefix_and_two_guarded_mac_boots_with_original_budgets(self):
         probe = Probe(self.args)
         witness_points = []
-        probe.reboot_witness = lambda case, boot: witness_points.append((case, boot, [call[2] for call in probe.calls]))
+        def witness(case, boot):
+            self.assertEqual(probe.mac_failure_context,
+                             {'case': case, 'boot_id': boot, 'transaction_started': False})
+            witness_points.append((case, boot, [call[2] for call in probe.calls]))
+        probe.reboot_witness = witness
         result = probe.run_mac_diagnostic()
         self.assertEqual(witness_points, [
             ('planned-reboot', 'boot0', ['initialize','handoff','handoff-confirm','restore-address']),
@@ -95,6 +99,7 @@ class FocusedMAC(unittest.TestCase):
         self.assertIn("--ask-post-switch-host", handoff[3])
         self.assertNotIn("macaddr", result["uci"]["network"]["lan"]["options"])
         self.assertEqual(json.loads((self.args.output / "summary.json").read_text())["outcome"], "not-reproduced")
+        self.assertIsNone(probe.mac_failure_context)
         original_parse = argparse.ArgumentParser.parse_args
         class Captured(Exception): pass
         def capture(parser, argv=None, *args, **kwargs):
@@ -103,6 +108,17 @@ class FocusedMAC(unittest.TestCase):
             raise Captured()
         with patch.object(argparse.ArgumentParser, "parse_args", capture), self.assertRaises(Captured):
             openwrt.main(["deploy", "--device", "vm", "--ttl", "300"])
+
+    def test_successful_mac_case_clears_context_before_non_mac_reporting(self):
+        probe = Probe(self.args)
+        def report(name):
+            self.assertIsNone(probe.mac_failure_context)
+            if name == 'original network and MAC restored through second guarded reboot':
+                raise OSError('synthetic reporting error after successful MAC restoration')
+        probe.passed = report
+        with self.assertRaisesRegex(OSError, 'reporting error'):
+            probe.run_mac_diagnostic()
+        self.assertIsNone(probe.mac_failure_context)
 
     def test_unconfirmed_initialization_stops_before_network_changes(self):
         probe = Probe(self.args); probe.initialize_state = "applied"
@@ -115,11 +131,15 @@ class FocusedMAC(unittest.TestCase):
                 probe = Probe(self.args); probe.restore_fault = fault
                 with self.assertRaises(AssertionError): probe.run_mac_diagnostic()
                 self.assertNotIn("original network and MAC restored through second guarded reboot", probe.results)
+                self.assertEqual(probe.mac_failure_context,
+                                 {'case': 'restore-mac', 'boot_id': 'boot1', 'transaction_started': True})
 
     def test_original_mac_transaction_error_is_not_swallowed(self):
         probe = Probe(self.args); failure = RuntimeError("synthetic restore failure"); probe.restore_error = failure
         with self.assertRaises(RuntimeError) as raised: probe.run_mac_diagnostic()
         self.assertIs(raised.exception, failure)
+        self.assertEqual(probe.mac_failure_context,
+                         {'case': 'restore-mac', 'boot_id': 'boot1', 'transaction_started': True})
 
     def test_failed_child_status_probe_is_one_second_and_keeps_original_failure(self):
         probe = Acceptance(self.args)
