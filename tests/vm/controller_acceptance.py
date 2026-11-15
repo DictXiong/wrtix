@@ -59,9 +59,9 @@ class Acceptance:
                     '-o', 'StrictHostKeyChecking=yes']
         self.results = []
 
-    def remote(self, command, *, host=None, data=None, check=True):
+    def remote(self, command, *, host=None, data=None, check=True, timeout=40):
         result = subprocess.run([*self.ssh, 'root@' + (host or self.host), command], input=data,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
         if check and result.returncode:
             raise RuntimeError('VM command failed (details retained privately)')
         return result
@@ -132,7 +132,7 @@ class Acceptance:
         if result.returncode != expected:
             diagnostic = failure_summary(name, action, result)
             try:
-                probe = self.remote('/usr/libexec/wrtix/agent status', check=False)
+                probe = self.remote('/usr/libexec/wrtix/agent status', check=False, timeout=1)
                 if probe.returncode:
                     raise ValueError('status unavailable')
                 status = json.loads(probe.stdout)
@@ -176,7 +176,7 @@ class Acceptance:
             time.sleep(2)
         raise RuntimeError('VM did not reach state ' + state)
 
-    def run(self):
+    def _baseline(self):
         identity = json.loads(self.remote('/usr/libexec/wrtix/agent identity').stdout)
         if identity['identity']['device_id']:
             raise RuntimeError('acceptance requires a freshly unenrolled isolated VM')
@@ -187,6 +187,19 @@ class Acceptance:
         original_network = self.remote('cat /etc/config/network').stdout
         original_mac = self.remote('cat /sys/class/net/eth0/address').stdout.strip()
         self.save('original-network', original_network)
+        return before, original_network, original_mac, release
+
+    def _initialize(self, before):
+        minimal = self.node()
+        result = self.command('deploy', minimal, name='initialize', options=(
+            '--initialize', '--target-host', self.host, '--receipt', self.receipt('initialize'), '--auto-confirm', '--ttl', '180'))
+        assert result['state'] == 'confirmed'
+        assert self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout == before
+        self.passed('initial enrollment preserves existing network, password and keys')
+        return minimal
+
+    def run(self):
+        before, original_network, original_mac, release = self._baseline()
         first = self.node(files={'/etc/wrtix-first-probe': {'text': 'candidate', 'mode': '0600'}})
         self.command('deploy', first, name='first-unconfirmed', options=(
             '--initialize', '--target-host', self.host, '--ttl', '60',
@@ -196,12 +209,7 @@ class Acceptance:
         assert self.remote('test ! -e /etc/wrtix-first-probe', check=False).returncode == 0
         assert self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout == before
         self.passed('failed first takeover restores unregistered identity and original network/authentication')
-        minimal = self.node()
-        result = self.command('deploy', minimal, name='initialize', options=(
-            '--initialize', '--target-host', self.host, '--receipt', self.receipt('initialize'), '--auto-confirm', '--ttl', '180'))
-        assert result['state'] == 'confirmed'
-        assert self.remote('sha256sum /etc/shadow /etc/config/network /etc/dropbear/authorized_keys').stdout == before
-        self.passed('initial enrollment preserves existing network, password and keys')
+        minimal = self._initialize(before)
         assert self.command('deploy', minimal, name='noop')['state'] == 'noop'
         self.passed('identical deployment is noop')
 
@@ -253,6 +261,13 @@ class Acceptance:
         self.wait_state('rolled-back', 90)
         self.passed('killed controller recovers via saved receipt and target guard')
 
+        restore = self._address_and_mac_reboots(original_network, original_mac)
+        self.save('summary.json', {'openwrt': release.decode(), 'passed': self.results,
+                                  'not_covered': ['wireless and hardware acceleration (VM has neither)',
+                                                  'physical device/AP-specific checks']})
+        return restore
+
+    def _address_and_mac_reboots(self, original_network, original_mac):
         network = compiler.parse_uci(original_network)
         network['lan']['options']['ipaddr'] = '10.0.2.16'
         moved = self.node(uci={'network': network}, services={'network': {'enable': True, 'action': 'reload', 'reloadOn': {'uci': ['network'], 'files': []}}})
@@ -294,10 +309,23 @@ class Acceptance:
         assert restored_identity['boot_id'] != after['boot_id']
         assert self.remote('cat /sys/class/net/eth0/address').stdout.strip() == original_mac
         self.passed('original network and MAC restored through second guarded reboot')
-        self.save('summary.json', {'openwrt': release.decode(), 'passed': self.results,
-                                  'not_covered': ['wireless and hardware acceleration (VM has neither)',
-                                                  'physical device/AP-specific checks']})
         return copy.deepcopy(restore)
+
+    def run_mac_diagnostic(self):
+        """One fresh, address-preserving reproduction of the two MAC boots."""
+        before, original_network, original_mac, release = self._baseline()
+        self._initialize(before)
+        restore = self._address_and_mac_reboots(original_network, original_mac)
+        self.save('summary.json', {
+            'openwrt': release.decode(), 'case': 'mac-reboot',
+            'outcome': 'not-reproduced', 'passed': self.results,
+            'not_covered': ['other full-suite enrollment/timeout/authentication/interruption cases',
+                            'package lifecycle after MAC acceptance',
+                            'wireless and hardware acceleration (VM has neither)',
+                            'physical device/AP-specific checks'],
+        })
+        return restore
+
 
 
 def main():

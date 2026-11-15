@@ -8,10 +8,27 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import time
 
 import machine
+from failure_snapshot import capture_on_failure
 from controller_acceptance import Acceptance
+
+
+
+def stop_vm(vm, *, preserve_failure=False):
+    """Always attempt cleanup; a cleanup error cannot replace the case failure."""
+    try:
+        machine.stop(vm)
+    except BaseException:
+        if not preserve_failure:
+            raise
+        try:
+            (vm.parent / 'cleanup-error.json').write_text(
+                '{"vm_stop":"failed","original_failure_preserved":true}\n')
+        except OSError:
+            pass
 
 
 def main():
@@ -19,6 +36,7 @@ def main():
     parser.add_argument('--artifacts', required=True, type=Path)
     parser.add_argument('--directory', required=True, type=Path)
     parser.add_argument('--image', type=Path)
+    parser.add_argument('--case', choices=('full', 'mac-reboot'), default='full')
     parser.add_argument('--accel', choices=('kvm', 'tcg'), help='Override automatic acceleration selection')
     args = parser.parse_args()
     artifacts, work = args.artifacts.resolve(), args.directory.resolve()
@@ -79,14 +97,26 @@ def main():
         if hashes() != before:
             raise RuntimeError('package installation changed network or authentication')
         success('signed SDK package installs with dependencies and preserves network/authentication')
-        remote(replace)
-        if hashes() != before:
-            raise RuntimeError('package reinstall changed network or authentication')
-        success('idle package replacement preserves network/authentication')
+        if args.case == 'full':
+            remote(replace)
+            if hashes() != before:
+                raise RuntimeError('package reinstall changed network or authentication')
+            success('idle package replacement preserves network/authentication')
 
         acceptance = Acceptance(argparse.Namespace(
             key=vm / 'identity', known_hosts=vm / 'known_hosts', output=work / 'controller',
             host='127.0.0.1', alternate_host='127.0.0.2', port=22080))
+        if args.case == 'mac-reboot':
+            acceptance.run_mac_diagnostic()
+            summary = {'openwrt': machine.PIN['release'], 'case': 'mac-reboot',
+                       'outcome': 'not-reproduced', 'package': package.name,
+                       'package_sha256': metadata['package_sha256'],
+                       'passed': passed, 'controller_passed': acceptance.results,
+                       'not_covered': ['full transaction/package suite', 'SDK build',
+                                       'identical hosted CI environment', 'physical devices']}
+            (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+            print('NOT_REPRODUCED one bounded MAC diagnostic; root cause is not claimed fixed', flush=True)
+            return
         accepted = acceptance.run()
         success('controller enrollment, handoff, receipts, guarded reboot and rollback acceptance')
         # Keep the complete accepted resources: omitting previously owned
@@ -123,8 +153,12 @@ def main():
                    'not_covered': ['opkg/IPK', 'non-x86 runtime', 'physical radios, VLAN and hardware acceleration',
                                    'firmware sysupgrade']}
         (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    except BaseException:
+        # The failure is already final. Capture before cleanup without masking it.
+        with capture_on_failure(vm, work / 'failure-snapshot.json', budget_seconds=7):
+            raise
     finally:
-        machine.stop(vm)
+        stop_vm(vm, preserve_failure=sys.exc_info()[0] is not None)
 
 
 if __name__ == '__main__':

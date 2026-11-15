@@ -91,3 +91,25 @@ never upload the whole working directory.
 The public failure summary retains only known protocol errors and lifecycle fields.
 Its status snapshot is taken after the command fails; it is not evidence of the
 exact failing predicate. Full controller stderr and receipts remain private.
+
+## Bounded MAC diagnostic
+
+Reuse an existing signed SDK artifact and pinned image, without rebuilding the
+SDK or rerunning the complete suite:
+
+```sh
+python3 tests/vm/package_acceptance.py --artifacts /path/to/existing-artifacts \
+  --image /path/to/pinned-image.img.gz --case mac-reboot --accel tcg \
+  --directory /tmp/wrtix-mac-diagnostic
+```
+
+The focused path preserves fresh enrollment, both address handoffs and both
+protected MAC reboots. It retains the original TTL, wait, identity and actual MAC
+checks. Success means only that this one run did not reproduce the failure.
+
+After a failure, the harness spends at most one second on its SSH status probe
+and seven seconds on independent QMP/normal-console diagnostics before stopping
+the VM. Preinit/failsafe consoles receive no input. The public snapshot contains
+only validated fields; missing channels remain unavailable. Original errors and
+nonzero exits survive snapshot or cleanup failure. This does not repair the guest
+or relax the acceptance criteria.
