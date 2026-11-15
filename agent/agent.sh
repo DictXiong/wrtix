@@ -110,10 +110,13 @@ agent_identity() {
  local device_id= board_name= contract=$(p /usr/share/wrtix/contract.json) password=true resolver=true
  agent_ready "${1:-}"
  jq -e '.schema_version==1 and .profile=="wrtix-v2"' "$contract" >/dev/null || fail incompatible_agent
- if [ -e "$(p /etc/wrtix/identity.json)" ]; then
+ if [ -e "$(p /etc/wrtix/identity.json)" ] || [ -L "$(p /etc/wrtix/identity.json)" ]; then
   regular_or_absent etc/wrtix/identity.json || fail invalid_identity
   [ "$(file_mode "$(p /etc/wrtix/identity.json)")" = 600 ] || fail invalid_identity
-  device_id=$(jq -er 'select(.schema_version==1)|.device_id|select(type=="string" and length>0 and length<=64)' "$(p /etc/wrtix/identity.json)") || fail invalid_identity
+  device_id=$(jq -ser 'if length==1 and (.[0]|type=="object" and .schema_version==1 and
+   (.device_id|type=="string" and length>0 and length<=64 and
+    (explode|all(.[];(.>=48 and .<=57)or(.>=65 and .<=90)or(.>=97 and .<=122)or .==95))))
+   then .[0].device_id else error("invalid_identity") end' "$(p /etc/wrtix/identity.json)") || fail invalid_identity
  fi
  if plain "$(p /tmp/sysinfo/board_name)"; then board_name=$(cat "$(p /tmp/sysinfo/board_name)"); fi
  if plain "$(p /etc/wrtix/root-password-hash)"; then
@@ -472,12 +475,14 @@ baseline_matches() {
  rm -f "$work"
  printf '%s' "$actual" | jq -e --slurpfile m "$file" '
  .boot_id==$m[0].boot_id and .identity==$m[0].baseline.identity and .contract_sha256==$m[0].baseline.contract_sha256 and
- .files==$m[0].baseline.files and .modes==$m[0].baseline.modes and .services==$m[0].baseline.services and .resolver_state==$m[0].baseline.resolver_state
+ .files==$m[0].baseline.files and .modes==$m[0].baseline.modes and .services==$m[0].baseline.services and .resolver_state==$m[0].baseline.resolver_state and
+ .ledger==$m[0].baseline.ledger
  ' >/dev/null || return 1
  printf '%s' "$actual" | jq -e --slurpfile m "$file" '
  .identity as $i | (($m[0].board_names//[]) as $boards | ($boards|length)==0 or ($boards|index($i.board_name)!=null)) and
  .contract_sha256==$m[0].contract_sha256 and
- (if $m[0].initialize//false then $i.device_id=="" else $i.device_id==$m[0].device_id end)
+ (if $m[0].initialize//false then $i.device_id=="" and .ledger==null else
+  ($i.device_id|type=="string" and length>0) and (.ledger==null or .ledger.device_id==$i.device_id) end)
  ' >/dev/null
 }
 process_same() {

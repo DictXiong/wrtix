@@ -172,6 +172,36 @@ For a DHCP address change, pass `--post-switch-host` when known, or
 still active while waiting for input. The tool verifies the transaction identity
 at the new endpoint; an arbitrary responding host is not sufficient.
 
+### Change a registered device's configuration name
+
+Select the new device definition and the existing router's SSH endpoint with a
+normal `switch`. No initialization, reset or rename option is needed:
+
+```sh
+openwrt-rebuild dry-run --flake .#site --device new_router \
+  --target-host root@router.example --remote --diff
+openwrt-rebuild switch --flake .#site --device new_router \
+  --target-host root@router.example
+```
+
+When the registered ID differs, the tool warns on stderr and continues without
+an interactive question, including in scripts. The underlying `openwrt-deploy
+deploy` and `openwrt-rebuild test` behave the same way. Remote preview reports
+the proposed identity change without applying it. Missing or invalid registration
+still prevents ordinary deployment; `--init` remains only for first enrollment.
+
+The transaction snapshots the old identity and resource ownership. Confirmation
+accepts only the new identity and candidate configuration. Failure or rollback
+restores the old identity, configuration and ownership. The receipt and journal
+continue to identify the candidate transaction even after rollback; they are not
+rewritten to pretend it succeeded. Repeating a confirmed deployment returns noop.
+Existing MAC-triggered reboot and post-switch connection options apply unchanged.
+
+This capability requires the matching controller and agent contract containing
+`transactional_identity_change = 1`. An older agent is rejected before staging;
+install the matching package separately, after finishing any active transaction.
+The controller does not upgrade the agent as part of a configuration transaction.
+
 ### Inspecting configuration differences
 
 Use `--diff` to print a human-readable comparison on **stderr**. Standard output

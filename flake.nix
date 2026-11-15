@@ -116,6 +116,7 @@
                 python3 ${self}/tests/test_target.py
                 python3 ${self}/tests/test_controller_agent.py
                 python3 ${self}/tests/test_diff.py
+                python3 ${self}/tests/test_identity_change.py
                 touch "$out"
               '';
           backup =

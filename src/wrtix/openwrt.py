@@ -37,6 +37,7 @@ CONFIRM_REPLY_GRACE_SECONDS = 15
 REMOTE = "/usr/libexec/wrtix/agent"
 GUARD = "/etc/init.d/wrtix-agent"
 LEDGER = "etc/wrtix/managed.json"
+AGENT_PROTOCOL_ERROR = "target agent protocol differs from the controller; install the matching wrtix-agent package before deployment"
 
 
 class DeployError(RuntimeError):
@@ -125,7 +126,7 @@ installer_runtime_status_failed installer_transaction_active installer_transfer_
 installer_unexpected_archive_member installer_unsafe_directory installer_unsafe_lock
 installer_unsafe_runtime installer_workspace_failed invalid_archive invalid_backup_metadata
 invalid_backup_paths invalid_check_request invalid_command invalid_lease invalid_manifest
-invalid_owned_ledger invalid_payload_name invalid_service_backup invalid_token
+invalid_owned_ledger invalid_payload_name invalid_service_backup invalid_token invalid_identity
 identity_check_failed identity_status_failed transaction_active missing_contract missing_agent_runtime
 missing_backup_metadata missing_guard missing_manifest missing_payload missing_required_service
 no_transaction nonregular_archive_member orphan_reload_child_would_not_stop payload_corrupt
@@ -224,6 +225,18 @@ def valid_unenrolled(identity, boot):
     return (isinstance(boot, str)
             and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot) is not None
             and identity.get("device_id") == "")
+
+
+def valid_device_id(value):
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_]{1,64}", value) is not None
+
+
+def warn_identity_change(transport, identity, node, *, preview=False):
+    if identity["device_id"] not in ("", node):
+        with Progress.external_output():
+            print("openwrt-deploy: warning: registered device ID " + identity["device_id"]
+                  + " -> " + node + " [target " + transport._endpoint() + "]"
+                  + (" (preview only)" if preview else ""), file=sys.stderr)
 
 
 class Transport:
@@ -452,18 +465,20 @@ class Transport:
         except (ValueError, UnicodeError):
             raise DeployError("target wrtix contract is unavailable or incompatible") from None
 
-    def agent_preflight(self, allow_initialize=False):
+    def agent_preflight(self, allow_initialize=False, *, allow_identity_change=False):
         result = self.agent_contract()
         identity, desired = result["identity"], self.compiled["identity"]
-        if allow_initialize and not identity.get("device_id"):
+        if allow_initialize and identity.get("device_id") == "":
             if not valid_unenrolled(identity, result.get("boot_id")):
                 raise DeployError("target does not prove an unenrolled state")
-        elif identity.get("device_id") != self.node:
+        elif not valid_device_id(identity.get("device_id")):
+            raise DeployError("target has no valid registered identity; use --init only for an unenrolled device")
+        elif not allow_identity_change and identity["device_id"] != self.node:
             raise DeployError("target registered identity differs")
         if desired.get("board_names") and identity.get("board_name") not in desired["board_names"]:
             raise DeployError("target board differs from the declared expectation")
         if result.get("contract_sha256") != self.compiled["contract_sha256"]:
-            raise DeployError("target agent protocol differs from the controller")
+            raise DeployError(AGENT_PROTOCOL_ERROR)
         self.compiled["engine_sha256"] = result["engine_sha256"]
         self.compiled["guard_sha256"] = result["guard_sha256"]
         return result
@@ -476,7 +491,7 @@ class Transport:
         # The package owns its runtime. Deployment must never overwrite it.
         result = self.agent_contract()
         if result["contract_sha256"] != self.compiled["contract_sha256"]:
-            raise DeployError("target agent protocol differs from the controller")
+            raise DeployError(AGENT_PROTOCOL_ERROR)
         self.compiled.update({key: result[key] for key in ("engine_sha256", "guard_sha256")})
 
     def ledger(self):
@@ -775,7 +790,7 @@ def complete_planned_reboot(transport, receipt, receipt_path, status, transports
              "transaction reboot requirement changed", "invalid transaction boot identity",
              "unexpected transaction boot", "post-reboot agent boot identity differs",
              "target registered identity differs", "target board differs from the declared expectation",
-             "target agent protocol differs from the controller"}
+             AGENT_PROTOCOL_ERROR}
     def fatal_error(error):
         message = str(error)
         return isinstance(error, ActivationError) or message in fatal or any(reason in message for reason in (
@@ -1243,11 +1258,15 @@ def main(argv=None):
                     result["ask_post_switch_host"] = True
                 if args.remote:
                     with device_progress.stage("Checking agent identity"):
-                        contract = transport.agent_preflight(allow_initialize=args.initialize)
+                        contract = transport.agent_preflight(allow_initialize=args.initialize, allow_identity_change=True)
                     result["remote_identity_verified"] = True
+                    if contract["identity"]["device_id"] and contract["identity"]["device_id"] != node:
+                        result["identity_change"] = {"from": contract["identity"]["device_id"], "to": node}
                     if args.initialize:
                         result["initialization_required"] = not contract["identity"].get("device_id")
                 if not args.diff:
+                    if args.remote:
+                        warn_identity_change(transport, contract["identity"], node, preview=True)
                     device_progress.message("Configuration preview ready")
                     emit(result)
                     continue
@@ -1271,7 +1290,8 @@ def main(argv=None):
                 emit(public_status(result))
                 continue
             with device_progress.stage("Checking agent identity"):
-                contract = transport.agent_preflight(allow_initialize=args.initialize or args.command == "prepare-packages")
+                contract = transport.agent_preflight(allow_initialize=args.initialize or args.command == "prepare-packages",
+                                                     allow_identity_change=True)
             if args.command == "prepare-packages":
                 with device_progress.stage("Preparing required packages (outside configuration rollback)"):
                     result = transport.call("package-prepare", data=canonical(compiled["packages"]))
@@ -1280,6 +1300,8 @@ def main(argv=None):
                 emit({"device": node, **result})
                 continue
             initialize = args.initialize and not contract["identity"].get("device_id")
+            identity_change = contract["identity"]["device_id"] not in ("", node)
+            warn_identity_change(transport, contract["identity"], node, preview=args.command in ("plan", "verify"))
             if compiled["packages"]:
                 # Package installs/removals are deliberately separate from rollbackable config.
                 with device_progress.stage("Checking installed packages"):
@@ -1297,15 +1319,17 @@ def main(argv=None):
                         raise DeployError("target has no wrtix agent; install the package first")
             with device_progress.stage("Reading current configuration"):
                 old = transport.ledger()
-                if old and (initialize or old.get("device_id") != node):
+                if old and (initialize or old.get("device_id") != contract["identity"]["device_id"]):
                     raise DeployError("managed resource ledger belongs to another device or is present on an uninitialized target")
                 request = {"paths": managed_paths(compiled, old),
                            "services": sorted(set(compiled["services"]) | set(old.get("services", [])))}
                 baseline = (configuration_diff(transport, request, compiled, old, node) if args.diff
                             else transport.call("check", data=canonical(request)))
-                if initialize and (baseline.get("boot_id") != contract.get("boot_id")
-                                   or baseline.get("identity") != contract["identity"]):
-                    raise DeployError("initialization identity or boot changed before staging")
+                if (baseline.get("boot_id") != contract.get("boot_id")
+                        or baseline.get("identity") != contract["identity"]):
+                    raise DeployError("target identity or boot changed before staging")
+                if (baseline.get("ledger") or {}) != old:
+                    raise DeployError("managed resource ledger changed before staging")
             if args.command == "plan":
                 device_progress.message("Configuration preview ready")
                 emit(result)
@@ -1320,10 +1344,10 @@ def main(argv=None):
             if args.command == "verify":
                 with device_progress.stage("Verifying configuration"):
                     transport.call("verify", data=canonical({"checks": compiled["checks"]}))
-                    emit({"device": node, "matches": not changed and not service_changes and auxiliary_ok,
+                    emit({"device": node, "matches": not changed and not service_changes and auxiliary_ok and not identity_change,
                           "different_paths": changed, "different_services": service_changes,
                           "root_and_resolver_match": auxiliary_ok})
-                    if changed or service_changes or not auxiliary_ok:
+                    if changed or service_changes or not auxiliary_ok or identity_change:
                         raise DeployError("target configuration differs from evaluated fleet")
                 device_progress.message("Configuration matches")
                 continue
@@ -1351,6 +1375,7 @@ def main(argv=None):
                            "port": transport.port, "initial_port": transport.port, "initial_host": transport.host,
                            "user": transport.user, "token": transaction["token"], "state": "prepared",
                            "boot_id": baseline["boot_id"], "origin_boot_id": baseline["boot_id"],
+                           "initial_identity": baseline["identity"],
                            "rollback_deadline": time.time() + ttl, "host_key_alias": transport.host_key_alias,
                            "changed_paths": changed,
                            "manifest_sha256": digest(canonical(manifest))}

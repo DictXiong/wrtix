@@ -63,6 +63,15 @@ previous unregistered state. Apply uses baseline comparison to reject concurrent
 changes. Files, service policy and managed credentials are restored on failure.
 Optional authentication omitted from configuration remains unmanaged.
 
+A registered device ID is a configuration name, not a permanent hardware ID.
+Normal deployments may replace it. The fresh baseline binds the old identity,
+boot and ownership ledger through staging and apply; the candidate identity and
+ledger belong to the new ID. Both are backed up and restored by the existing
+transaction. Reconnection and confirmation still require the candidate ID.
+Receipts retain the original identity separately from their candidate device ID.
+The `transactional_identity_change` contract revision requires a matching agent;
+it does not add a second registration path or recovery owner.
+
 A staged transaction has a bounded deadline. A guard survives controller loss;
 required checks failing or being unavailable prevent confirmation. A planned MAC
 change reboot has an explicit boot transition and resume window. Recovery cannot

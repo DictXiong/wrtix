@@ -12,6 +12,13 @@ unchanged deadlines, noop, secret provenance and private workspace cleanup.
 They execute the real shell agent in isolated synthetic filesystem trees through
 the controller, without claiming SSH, official VM or physical-device acceptance.
 
+Identity-change regressions use the same controller and real shell agent with
+synthetic file trees. They cover normal same-ID/noop and old-to-new deployment,
+stderr warnings with JSON stdout, read-only previews, invalid registration,
+board/ownership checks, concurrent identity/ledger changes, confirmation from a
+receipt, explicit/expired rollback and planned MAC reboots. The reboot in these
+fixtures is simulated; real guest reboot acceptance remains a separate VM test.
+
 The initial x86_64 acceptance ran 34 controller, 43 inherited SSH/SOPS/receipt,
 55 target, 5 controller-to-agent and 7 package-lifecycle/backup cases. These are regression
 counts, not independent proofs of all platform behavior. aarch64 is exported and
