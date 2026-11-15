@@ -113,3 +113,21 @@ the VM. Preinit/failsafe consoles receive no input. The public snapshot contains
 only validated fields; missing channels remain unavailable. Original errors and
 nonzero exits survive snapshot or cleanup failure. This does not repair the guest
 or relax the acceptance criteria.
+
+The existing **Checks and packages** workflow also exposes a default-off
+`mac_reboot_diagnostic` manual input. On a `diagnostic/**` branch, dispatch once:
+
+```sh
+gh workflow run check.yml --ref diagnostic/example -f mac_reboot_diagnostic=true
+```
+
+Diagnostic branch pushes do not start the normal build jobs. A normal dispatch
+without this input, main/other branch pushes, pull requests and tag builds retain
+their existing gates. Diagnostic mode downloads the fixed signed SDK artifact
+from run `43657030654`, verifies its APK/key/index/metadata hashes and the pinned
+image, and runs only the focused TCG case on Ubuntu 24.04. It neither rebuilds
+packages nor publishes a release. The original package source and new harness
+revision are recorded separately, along with the actual runner/QEMU versions.
+The published diagnostic artifact contains only explicitly listed result fields;
+private VM state, receipts, manifests, raw console and command logs are excluded.
+A successful diagnostic does not amend a historical failed run or prove a fix.
