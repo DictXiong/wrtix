@@ -124,7 +124,7 @@ jobs:
           inputs = {'harness_revision': os.environ['GITHUB_SHA'], 'SDK_run': 43657030654,
                     'SDK_source_revision': metadata['source_revision'], 'artifact_sha256': expected,
                     'image_sha256': pin['sha256'], 'case': 'mac-reboot', 'accel': 'tcg',
-                    'memory_MiB': 384, 'vCPUs': 2, 'MAC_TTL': 300, 'controller_wait': 240}
+                    'memory_MiB': 384, 'vCPUs': 2, 'MAC_TTL': 300, 'controller_wait': 240, 'failure_snapshot_seconds': 30}
           environment = {'runner_OS': os.environ.get('RUNNER_OS'), 'image_OS': os.environ.get('ImageOS'),
                          'image_version': os.environ.get('ImageVersion'), 'kernel': platform.release(),
                          'arch': platform.machine(), 'QEMU': subprocess.check_output(['qemu-system-x86_64', '--version'], text=True).splitlines()[0],
@@ -150,7 +150,8 @@ jobs:
               (public / 'VM-START.json').write_text(json.dumps(started, indent=2) + '\n')
           machine.start = record_start
           sys.argv = ['package_acceptance.py', '--artifacts', 'artifacts', '--image', str(root / 'openwrt.img.gz'),
-                      '--directory', str(work), '--case', 'mac-reboot', '--accel', 'tcg']
+                      '--directory', str(work), '--case', 'mac-reboot', '--accel', 'tcg',
+                      '--failure-snapshot-seconds', '30']
           try:
               runpy.run_path('tests/vm/package_acceptance.py', run_name='__main__')
           finally:

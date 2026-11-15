@@ -131,3 +131,24 @@ revision are recorded separately, along with the actual runner/QEMU versions.
 The published diagnostic artifact contains only explicitly listed result fields;
 private VM state, receipts, manifests, raw console and command logs are excluded.
 A successful diagnostic does not amend a historical failed run or prove a fix.
+
+The manual MAC diagnostic opts into `--failure-snapshot-seconds 30`: only after
+an already failed case, up to 30 seconds are available for independent read-only
+guest observation. Normal acceptance keeps its seven-second budget. Controller
+wait240, transaction TTL300 and confirmation/rollback assertions are unchanged;
+late recovery during observation never changes the failed case to a pass.
+
+The failure snapshot separates evidence sources: bounded existing-console boot
+milestones, passive live serial, QMP status, owned host QEMU CPU observations,
+fixed loopback SSH banners and a strictly authenticated read-only SSH probe.
+Milestone classifications describe observed bytes, not a diagnosis of the guest's
+actual boot stage. QMP running and increasing host CPU counters do not establish
+guest health. Missing or unattempted probes remain unavailable.
+
+Serial input requires positive current-boot normal userspace evidence, excludes
+failsafe, and sends one newline before requiring a fresh root prompt. Guest data
+is discarded if the boot changes during observation. The structured guest fields
+include network/carrier/routes, SSH listening, necessary process and guard state;
+raw console lines, complete arguments, credentials and marker contents are never
+published. Lock observations remain inode candidates, not proof of ownership or
+deadlock. This observer performs no resume, confirmation, repair or reboot.

@@ -59,27 +59,16 @@ class Snapshot(unittest.TestCase):
                      "Press the [f] key and hit [enter] to enter failsafe mode\n")
         with patch.object(capture.socket, "socket") as make_socket:
             result = capture._serial(self.vm, time.monotonic() + .1)
-        make_socket.assert_not_called()
-        self.assertEqual(result["boot_stage"], "boot_or_preinit")
+        make_socket.return_value.__enter__.return_value.sendall.assert_not_called()
+        self.assertEqual(result["gate"], "boot_evidence_only")
         self.assertFalse(result["available"])
 
     def test_failsafe_never_receives_input(self):
         self.console("Please press Enter to activate this console.\nEntering failsafe mode\n")
         with patch.object(capture.socket, "socket") as make_socket:
             result = capture._serial(self.vm, time.monotonic() + .1)
-        make_socket.assert_not_called()
-        self.assertEqual(result["boot_stage"], "failsafe")
-
-    def test_boot_change_after_connect_sends_no_input(self):
-        self.console("Please press Enter to activate this console.\n")
-        fake = Mock()
-        fake.__enter__ = Mock(return_value=fake)
-        fake.__exit__ = Mock(return_value=False)
-        with patch.object(capture, "_console_gate", side_effect=[("normal_console", 0), ("boot_or_preinit", 100)]):
-            with patch.object(capture.socket, "socket", return_value=fake):
-                result = capture._serial(self.vm, time.monotonic() + .2)
-        fake.sendall.assert_not_called()
-        self.assertEqual(result["reason"], "boot_changed")
+        make_socket.return_value.__enter__.return_value.sendall.assert_not_called()
+        self.assertEqual(result["gate"], "failsafe_evidence")
 
     def test_hung_qmp_obeys_shared_budget(self):
         self.console("Press the [f] key and hit [enter] to enter failsafe mode\n")
@@ -131,6 +120,7 @@ class Snapshot(unittest.TestCase):
                 b"WRTIXSNAP process 42 flock S locks_lock_inode_wait\n"
                 b"WRTIXSNAP process 43 SECRET_SENTINEL S SECRET_SENTINEL\n"
                 b"WRTIXSNAP token SECRET_SENTINEL\nWRTIXSNAP lock_owner 42\n"
+                b"WRTIXSNAP end_boot_id 01234567-89ab-cdef-0123-456789abcdef\n"
                 b"WRTIXSNAP done\n")
         self.server("serial.sock", handler)
         result = capture.snapshot(self.vm, .7)

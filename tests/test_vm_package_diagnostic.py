@@ -18,7 +18,7 @@ import failure_snapshot
 
 
 class PackageDiagnostic(unittest.TestCase):
-    def invoke(self, directory, acceptance, capture, stop):
+    def invoke(self, directory, acceptance, capture, stop, snapshot_seconds=None):
         art = directory / 'art'; art.mkdir()
         (art / 'test.apk').write_bytes(b'synthetic-package')
         (art / 'test.pem').write_text('synthetic-public-key')
@@ -32,6 +32,8 @@ class PackageDiagnostic(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, b'original-hashes\n', b'')
         args = ['fixture', '--artifacts', str(art), '--directory', str(directory / 'run'),
                 '--image', str(directory / 'image'), '--accel', 'tcg', '--case', 'mac-reboot']
+        if snapshot_seconds is not None:
+            args.extend(['--failure-snapshot-seconds', str(snapshot_seconds)])
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(sys, 'argv', args))
             stack.enter_context(patch.object(runner.machine, 'prepare'))
@@ -78,6 +80,30 @@ class PackageDiagnostic(unittest.TestCase):
             self.assertFalse((directory / 'run/failure-snapshot.json').exists())
         acceptance.run_mac_diagnostic.assert_called_once()
         acceptance.run.assert_not_called(); capture.assert_not_called(); stop.assert_called_once()
+
+    def test_extended_failure_budget_preserves_original_failure_and_cleanup(self):
+        original = RuntimeError('synthetic-original-case-failure')
+        acceptance = Mock(); acceptance.run_mac_diagnostic.side_effect = original
+        capture = Mock(return_value={'capture': 'synthetic'})
+        stop = Mock()
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            with self.assertRaises(RuntimeError) as caught:
+                self.invoke(directory, acceptance, capture, stop, snapshot_seconds=30)
+            self.assertIs(caught.exception, original)
+            capture.assert_called_once_with(directory / 'run/guest', 30)
+        stop.assert_called_once()
+        acceptance.run.assert_not_called()
+
+    def test_extended_budget_rejected_for_normal_acceptance(self):
+        args = ['fixture', '--artifacts', '/unused', '--directory', '/unused',
+                '--failure-snapshot-seconds', '30']
+        with patch.object(sys, 'argv', args), contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(runner.machine, 'prepare') as prepare:
+                with self.assertRaises(SystemExit) as caught:
+                    runner.main()
+        self.assertEqual(caught.exception.code, 2)
+        prepare.assert_not_called()
 
     def test_cleanup_failure_without_case_failure_is_not_success(self):
         error = OSError('cleanup failed')

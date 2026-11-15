@@ -37,8 +37,12 @@ def main():
     parser.add_argument('--directory', required=True, type=Path)
     parser.add_argument('--image', type=Path)
     parser.add_argument('--case', choices=('full', 'mac-reboot'), default='full')
+    parser.add_argument('--failure-snapshot-seconds', type=int, choices=(7, 30), default=7,
+                        help='Failure-only observation budget; 30 seconds is limited to the MAC diagnostic')
     parser.add_argument('--accel', choices=('kvm', 'tcg'), help='Override automatic acceleration selection')
     args = parser.parse_args()
+    if args.failure_snapshot_seconds != 7 and args.case != 'mac-reboot':
+        parser.error('extended failure snapshots require --case mac-reboot')
     artifacts, work = args.artifacts.resolve(), args.directory.resolve()
     if work.exists():
         parser.error('directory must not exist; this test creates a disposable VM')
@@ -155,7 +159,8 @@ def main():
         (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     except BaseException:
         # The failure is already final. Capture before cleanup without masking it.
-        with capture_on_failure(vm, work / 'failure-snapshot.json', budget_seconds=7):
+        with capture_on_failure(vm, work / 'failure-snapshot.json',
+                                budget_seconds=args.failure_snapshot_seconds):
             raise
     finally:
         stop_vm(vm, preserve_failure=sys.exc_info()[0] is not None)
