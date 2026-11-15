@@ -83,6 +83,67 @@ def parse_registers(text):
             **({'reason': 'register_fields_missing', 'missing_fields': missing} if missing else {})}
 
 
+_GRUB_BASE = 0x293c000
+_GRUB_PC = _GRUB_BASE + 0x1e
+_GRUB_TEMPLATE = bytes.fromhex('b80000000089c7b80000000089c6b90000000001ce01cf83ee0183ef01fdf3a4')
+_GRUB_TEMPLATE_SHA = 'b04ce0290305b147fbe314623d3a1d2d33656d0ca604a5cd697ac176e14f29fa'
+_GRUB_READ = 'xp /32bx 0x293c000'
+
+
+def parse_copy_template(text):
+    """Compare exactly32B at the observed PC base; never publish memory bytes."""
+    result = {'available': False, 'matched': False, 'address': hex(_GRUB_BASE),
+              'expected_template_sha256': _GRUB_TEMPLATE_SHA,
+              'basis': 'fixed_image_unique_GRUB_backward_mover_opcode_template'}
+    if not isinstance(text, str) or len(text) > 4096:
+        return {**result, 'reason': 'code_witness_unavailable'}
+    data = bytearray()
+    for line in text.splitlines():
+        match = re.fullmatch(r'\s*(?:0x)?([0-9a-fA-F]{8,16}):\s*((?:0x[0-9a-fA-F]{2}\s*)+)\s*', line)
+        if not match:
+            continue
+        if int(match[1],16) != _GRUB_BASE + len(data):
+            return {**result, 'reason': 'code_witness_address_mismatch'}
+        data.extend(int(v,16) for v in re.findall(r'0x([0-9a-fA-F]{2})',match[2]))
+        if len(data) > 32:
+            return {**result, 'reason': 'code_witness_oversized'}
+    if len(data) != 32:
+        return {**result, 'reason': 'code_witness_incomplete_or_unsupported'}
+    normalized = bytearray(data)
+    for start,end in ((1,5),(8,12),(15,19)):
+        normalized[start:end] = b'\0'*(end-start)
+    if bytes(normalized) != _GRUB_TEMPLATE:
+        return {**result, 'available': True, 'reason': 'fixed_template_not_matched'}
+    return {**result, 'available': True, 'matched': True,
+            'destination': hex(int.from_bytes(data[1:5],'little')),
+            'source': hex(int.from_bytes(data[8:12],'little')),
+            'size_bytes': int.from_bytes(data[15:19],'little'),
+            'PC_offset': '0x1e', 'instruction': 'REP_MOVSB',
+            'guest_memory_and_register_read_globally_atomic': False}
+
+
+def parse_copy_progress(text, template):
+    if not template.get('matched') or not isinstance(text,str):
+        return {'available':False,'reason':'copy_code_identity_not_verified'}
+    values = {}
+    for register,key in (('CX','remaining_bytes'),('SI','source_pointer'),('DI','destination_pointer')):
+        found = re.search(r'\b(?:E|R)'+register+r'=([0-9a-fA-F]{8,16})(?:\s|$)',text)
+        if found is None or int(found[1],16)>0xffffffff:
+            return {'available':False,'reason':'copy_progress_registers_unavailable'}
+        values[key]=int(found[1],16)
+    flags=re.search(r'\b(?:EFL|RFL)=([0-9a-fA-F]{8,16})(?:\s|$)',text)
+    if flags is None:
+        return {'available':False,'reason':'copy_direction_unavailable'}
+    count=values['remaining_bytes'];src=int(template['source'],16);dst=int(template['destination'],16)
+    return {'available':True,'remaining_bytes':count,
+            'source_pointer':hex(values['source_pointer']),'destination_pointer':hex(values['destination_pointer']),
+            'direction_backward':bool(int(flags[1],16)&0x400),
+            'remaining_within_initial_size':count<=template['size_bytes'],
+            'source_relation_matches':(values['source_pointer']-count+1)&0xffffffff==src,
+            'destination_relation_matches':(values['destination_pointer']-count+1)&0xffffffff==dst,
+            'interpretation':'counts_and_pointers_are_observations_not_a_product_assertion'}
+
+
 def parse_rom_ranges(text):
     """Retain BIOS ranges only from the CPU physical ``memory`` FlatView."""
     ranges, memory_view_seen = [], False
@@ -202,7 +263,7 @@ def locate(fields, witness=None, rom=None):
 def _witness_summary(witness):
     """Publish identity metadata only, not the complete symbol table."""
     case = witness.get('case') if isinstance(witness, dict) else None
-    case_metadata = {'case': case} if case in ('planned-reboot', 'restore-mac') else {}
+    case_metadata = {'case': case} if case in ('planned-reboot', 'restore-mac', 'ordinary-reboot') else {}
     if not isinstance(witness, dict) or witness.get('available') is not True:
         return {'available': False, 'reason': 'pre_failure_witness_unavailable', **case_metadata}
     result = {'available': True, **case_metadata, 'symbol_basis': 'pre_failure_boot_only', 'boot_continuity_proven': False}
@@ -272,7 +333,7 @@ class _Connection:
             raise ValueError('not a read-only localization command')
         if command == 'human-monitor-command' and (not isinstance(arguments, dict)
                 or set(arguments) - {'command-line', 'cpu-index'}
-                or arguments.get('command-line') not in ('info mtree -f', 'info roms', 'info registers')
+                or arguments.get('command-line') not in ('info mtree -f', 'info roms', 'info registers', _GRUB_READ)
                 or ('cpu-index' in arguments and (type(arguments['cpu-index']) is not int
                     or not 0 <= arguments['cpu-index'] < 4096))):
             raise ValueError('not a read-only localization HMP command')
@@ -359,10 +420,27 @@ def sample(directory, deadline, witness=None, *, interval_seconds=.2):
                             registers = {'available': False, 'reason': 'CPU_reply_identity_missing_or_mismatch'}
                         row['registers'] = registers
                         row['location'] = locate(registers.get('fields', {}), witness, rom)
+                        fields = registers.get('fields', {})
+                        if (fields.get('mode') == 'protected' and fields.get('paging_enabled') is False
+                                and ((_number(fields.get('cs_flags')) or 0) & (1 << 22))
+                                and _number(fields.get('cs_base')) == 0
+                                and _number(fields.get('linear_pc')) == _GRUB_PC):
+                            if 'GRUB_copy_code' not in report:
+                                try:
+                                    report['GRUB_copy_code'] = parse_copy_template(connection.call(
+                                        'human-monitor-command', {'command-line': _GRUB_READ}))
+                                except _QMPError as error:
+                                    report['GRUB_copy_code'] = {'available':False,'matched':False,'reason':error.reason}
+                            if report['GRUB_copy_code'].get('matched'):
+                                row['copy_progress'] = parse_copy_progress(text, report['GRUB_copy_code'])
                     except _QMPError as error:
                         row['registers'] = {'available': False, 'reason': error.reason}
                     except (TimeoutError, socket.timeout):
-                        row['registers'] = {'available': False, 'reason': 'timeout'}
+                        # A later optional code read cannot erase already captured registers.
+                        if 'registers' not in row:
+                            row['registers'] = {'available': False, 'reason': 'timeout'}
+                        else:
+                            row['additional_observation_error'] = 'timeout'
                         raise
                     finally:
                         row['until_seconds'] = round(time.monotonic()-started, 3)

@@ -28,7 +28,7 @@ def meta(boot=BOOT):
 
 
 class RebootWitness(unittest.TestCase):
-    def fixture(self, directory, *, end_boot=BOOT, symbols=SYMBOLS):
+    def fixture(self, directory, *, end_boot=BOOT, symbols=SYMBOLS, notes_available=True):
         (directory / '.wrtix-vm').touch()
         class Acceptance:
             def __init__(self):
@@ -38,7 +38,10 @@ class RebootWitness(unittest.TestCase):
                 if command == witness.META:
                     self.metas += 1
                     data = meta(end_boot if self.metas == 2 else BOOT)
-                elif command == 'cat /sys/kernel/notes': data = NOTES
+                elif command == 'cat /sys/kernel/notes':
+                    if not notes_available:
+                        return subprocess.CompletedProcess([],1,b'',b'PRIVATE missing capability')
+                    data = NOTES
                 elif command == 'cat /proc/kallsyms': data = symbols
                 else: raise AssertionError('non-readonly command')
                 return subprocess.CompletedProcess([], 0, data, b'')
@@ -93,6 +96,18 @@ class RebootWitness(unittest.TestCase):
             self.assertFalse(result['available'])
             self.assertEqual(result['reason'],'witness_storage_unavailable')
             self.assertFalse((directory/'cpu-witness.private.json').exists())
+
+    def test_missing_notes_preserves_metadata_and_live_symbols_without_ELF_claim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory=Path(tmp);acceptance=self.fixture(directory,notes_available=False)
+            result=witness.capture(acceptance,directory,'ordinary-reboot',BOOT)
+            self.assertTrue(result['available'])
+            self.assertFalse(result['fixed_ELF_binding']);self.assertNotIn('kaslr_slide',result)
+            self.assertEqual(result['reads']['notes']['reason'],'command_nonzero')
+            self.assertTrue(result['reads']['symbols']['available'])
+            self.assertEqual(result['boot_before']['boot_id'],BOOT)
+            self.assertEqual(result['boot_after']['boot_id'],BOOT)
+            self.assertNotIn('PRIVATE',json.dumps(result))
 
     def test_notes_bounds_and_identity_are_not_guessed(self):
         self.assertEqual(witness.parse_notes(NOTES),witness.FIXED_KERNEL['build_id'])

@@ -105,62 +105,91 @@ def _write(path, value):
 
 
 def capture(acceptance, directory, case, expected_boot_id):
-    """No transaction lease is running yet; failures stay unavailable, not PASS."""
+    """Read independent capabilities before a lease; missing notes is not lost SSH."""
     directory = Path(directory)
     started = time.monotonic()
     deadline = started + 25
+    cases = {'planned-reboot', 'restore-mac', 'ordinary-reboot'}
     valid_boot = isinstance(expected_boot_id, str) and bool(UUID.fullmatch(expected_boot_id))
-    public = {'case': case if case in {'planned-reboot','restore-mac'} else 'invalid_case',
-              'available': False, 'expected_boot_id': expected_boot_id if valid_boot else None,
-              'source': 'live pre-transaction /proc/kallsyms and /sys/kernel/notes',
-              'fixed_kernel': FIXED_KERNEL}
+    public = {'case': case if case in cases else 'invalid_case', 'available': False,
+              'expected_boot_id': expected_boot_id if valid_boot else None,
+              'source': 'authenticated same-boot live /proc/kallsyms; optional GNU notes',
+              'fixed_kernel': FIXED_KERNEL, 'reads': {}}
     private = dict(public)
     try:
         marker = directory / '.wrtix-vm'
         if not marker.is_file() or marker.is_symlink():
             return {**public, 'reason': 'witness_fixture_invalid'}
         (directory / 'cpu-witness.private.json').unlink(missing_ok=True)
-        if case not in {'planned-reboot','restore-mac'} or not valid_boot:
+        if case not in cases or not valid_boot:
             raise ValueError('witness_identity_invalid')
-        def read(command):
+        def read(name, command):
             remaining = min(10, deadline - time.monotonic())
             if remaining <= 0:
-                raise ValueError('witness_budget_exhausted')
-            result = acceptance.remote(command, timeout=remaining, check=False)
-            if result.returncode:
-                raise ValueError('witness_SSH_read_unavailable')
-            return result.stdout
-        before = parse_meta(read(META))
-        notes = read('cat /sys/kernel/notes')
-        symbols = read('cat /proc/kallsyms')
-        after = parse_meta(read(META))
-        public.update({'boot_before': before, 'boot_after': after,
-                       'symbol_table_sha256': hashlib.sha256(symbols).hexdigest(),
-                       'kernel_notes_sha256': hashlib.sha256(notes).hexdigest()})
+                public['reads'][name] = {'available': False, 'reason': 'budget_exhausted', 'attempted': False}
+                return None
+            try:
+                result = acceptance.remote(command, timeout=remaining, check=False)
+                public['reads'][name] = {'available': result.returncode == 0, 'attempted': True,
+                                         'returncode': result.returncode}
+                if result.returncode:
+                    public['reads'][name]['reason'] = 'SSH_or_remote_255' if result.returncode == 255 else 'command_nonzero'
+                    return None
+                public['reads'][name]['bytes'] = len(result.stdout)
+                return result.stdout
+            except Exception:
+                public['reads'][name] = {'available': False, 'reason': 'read_exception_or_timeout', 'attempted': True}
+                return None
+        def metadata(name):
+            raw = read(name, META)
+            if raw is not None:
+                try:
+                    value = parse_meta(raw)
+                    public[name] = value
+                    return value
+                except (ValueError, UnicodeError):
+                    public['reads'][name]['parse'] = 'invalid'
+            return None
+        before = metadata('boot_before')
+        notes = read('notes', 'cat /sys/kernel/notes')
+        symbols = read('symbols', 'cat /proc/kallsyms')
+        after = metadata('boot_after')
+        build_id = None
+        if notes is not None:
+            public['kernel_notes_sha256'] = hashlib.sha256(notes).hexdigest()
+            try:
+                build_id = parse_notes(notes)
+            except ValueError:
+                public['reads']['notes']['parse'] = 'GNU_build_id_unavailable'
+        public['kernel'] = {'release': before['release'] if before else None, 'build_id': build_id}
+        public['fixed_ELF_binding'] = bool(before and build_id == FIXED_KERNEL['build_id']
+                                          and before['release'] == FIXED_KERNEL['release'])
+        if build_id is not None:
+            public['build_id_matches_fixed'] = build_id == FIXED_KERNEL['build_id']
+        if before is None or after is None:
+            raise ValueError('boot_metadata_unavailable')
         if before['boot_id'] != expected_boot_id or after['boot_id'] != expected_boot_id:
             raise ValueError('witness_boot_changed')
-        build_id = parse_notes(notes)
-        public['kernel'] = {'release': before['release'], 'build_id': build_id}
-        if build_id != FIXED_KERNEL['build_id'] or before['release'] != FIXED_KERNEL['release']:
-            raise ValueError('fixed_kernel_identity_mismatch')
+        if symbols is None:
+            raise ValueError('symbol_table_unavailable')
+        public['symbol_table_sha256'] = hashlib.sha256(symbols).hexdigest()
         entries, named, complete = parse_symbols(symbols)
         public.update({'available': True, 'symbols_complete': complete,
-                       'symbol_basis': 'live /proc/kallsyms from authenticated preboot',
+                       'symbol_basis': 'authenticated same-boot live /proc/kallsyms',
                        'symbol_count': len(entries),
-                       'kernel_text': {'start': named['_text'], 'end': named['_etext']},
-                       'kaslr_slide': hex(int(named['_text'], 16) - int(FIXED_KERNEL['text_link_address'], 16))})
+                       'kernel_text': {'start': named['_text'], 'end': named['_etext']}})
+        if public['fixed_ELF_binding']:
+            public['kaslr_slide'] = hex(int(named['_text'], 16) - int(FIXED_KERNEL['text_link_address'], 16))
         private = {**public, 'boot_id': expected_boot_id, 'symbols': named, 'symbol_entries': entries}
         _write(directory / (case + '.kallsyms.private'), symbols)
     except Exception as error:
-        known = {'witness_identity_invalid','witness_budget_exhausted','witness_SSH_read_unavailable',
-                 'witness_boot_changed','fixed_kernel_identity_mismatch','symbol_addresses_restricted_or_missing',
-                 'symbol_table_invalid','notes_invalid','notes_oversized','GNU_build_id_unavailable','boot_metadata_invalid'}
+        known = {'witness_identity_invalid', 'boot_metadata_unavailable', 'witness_boot_changed',
+                 'symbol_table_unavailable', 'symbol_addresses_restricted_or_missing', 'symbol_table_invalid'}
         public['available'] = False
         public['reason'] = str(error) if str(error) in known else 'witness_read_or_parse_unavailable'
         private = dict(public)
     public['elapsed_seconds'] = round(time.monotonic() - started, 3)
     private['elapsed_seconds'] = public['elapsed_seconds']
-    # Replace the active private witness even on failure: never reuse the prior boot.
     try:
         _write(directory / 'cpu-witness.private.json', private)
         destination = acceptance.directory / 'reboot-witnesses.json'
@@ -170,7 +199,6 @@ def capture(acceptance, directory, case, expected_boot_id):
         existing[case] = public
         _write(destination, existing)
     except (OSError, ValueError, TypeError):
-        # Observation storage must not replace or alter the original case.
         public['available'] = False
         public['reason'] = 'witness_storage_unavailable'
         try:

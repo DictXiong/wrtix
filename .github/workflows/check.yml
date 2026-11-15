@@ -10,6 +10,10 @@ on:
         description: 'Only diagnose the fixed v1.1.0 MAC reboot case; do not build or release'
         type: boolean
         default: false
+      ordinary_reboot_control:
+        description: 'Only run one agent-free ordinary reboot control in the pinned VM'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -17,14 +21,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
-    if: github.event_name != 'workflow_dispatch' || !inputs.mac_reboot_diagnostic
+    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
       - run: nix flake check --show-trace
   package:
-    if: github.event_name != 'workflow_dispatch' || !inputs.mac_reboot_diagnostic
+    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -41,7 +45,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
   vm:
-    if: github.event_name != 'workflow_dispatch' || !inputs.mac_reboot_diagnostic
+    if: github.event_name != 'workflow_dispatch' || !(inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -75,12 +79,14 @@ jobs:
             ${{ runner.temp }}/wrtix-vm/failure-snapshot.json
             ${{ runner.temp }}/wrtix-vm/cleanup-error.json
   mac-reboot-diagnostic:
-    if: github.event_name == 'workflow_dispatch' && inputs.mac_reboot_diagnostic
+    if: github.event_name == 'workflow_dispatch' && (inputs.mac_reboot_diagnostic || inputs.ordinary_reboot_control)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       actions: read
+    env:
+      WRTIX_REBOOT_CONTROL: ${{ inputs.ordinary_reboot_control }}
     steps:
       - uses: actions/checkout@v4
       - name: Reuse the original failed tag's signed SDK artifact
@@ -121,10 +127,13 @@ jobs:
           subprocess.run(['curl', '--fail', '--location', '--retry', '3', '--output', str(image), pin['url']], check=True)
           if hashlib.sha256(image.read_bytes()).hexdigest() != pin['sha256']:
               raise RuntimeError('official image checksum mismatch')
+          control = os.environ.get('WRTIX_REBOOT_CONTROL') == 'true'
           inputs = {'harness_revision': os.environ['GITHUB_SHA'], 'SDK_run': 43657030654,
                     'SDK_source_revision': metadata['source_revision'], 'artifact_sha256': expected,
-                    'image_sha256': pin['sha256'], 'case': 'mac-reboot', 'accel': 'tcg',
-                    'memory_MiB': 384, 'vCPUs': 2, 'MAC_TTL': 300, 'controller_wait': 240, 'failure_snapshot_seconds': 30, 'cpu_localization': True}
+                    'image_sha256': pin['sha256'], 'case': 'ordinary-reboot-control' if control else 'mac-reboot', 'accel': 'tcg',
+                    'memory_MiB': 384, 'vCPUs': 2, 'MAC_TTL': None if control else 300, 'controller_wait': 240, 'failure_snapshot_seconds': 30,
+                    'cpu_localization': True, 'agent_package_installed': not control,
+                    'SDK_artifact_reference_only': control}
           environment = {'runner_OS': os.environ.get('RUNNER_OS'), 'image_OS': os.environ.get('ImageOS'),
                          'image_version': os.environ.get('ImageVersion'), 'kernel': platform.release(),
                          'arch': platform.machine(), 'QEMU': subprocess.check_output(['qemu-system-x86_64', '--version'], text=True).splitlines()[0],
@@ -149,11 +158,17 @@ jobs:
               started.update(json.loads((directory / 'machine.json').read_text()))
               (public / 'VM-START.json').write_text(json.dumps(started, indent=2) + '\n')
           machine.start = record_start
-          sys.argv = ['package_acceptance.py', '--artifacts', 'artifacts', '--image', str(root / 'openwrt.img.gz'),
-                      '--directory', str(work), '--case', 'mac-reboot', '--accel', 'tcg',
-                      '--failure-snapshot-seconds', '30', '--cpu-localization']
+          control = os.environ.get('WRTIX_REBOOT_CONTROL') == 'true'
+          if control:
+              script = 'tests/vm/ordinary_reboot_control.py'
+              sys.argv = ['ordinary_reboot_control.py', '--image', str(root / 'openwrt.img.gz'), '--directory', str(work)]
+          else:
+              script = 'tests/vm/package_acceptance.py'
+              sys.argv = ['package_acceptance.py', '--artifacts', 'artifacts', '--image', str(root / 'openwrt.img.gz'),
+                          '--directory', str(work), '--case', 'mac-reboot', '--accel', 'tcg',
+                          '--failure-snapshot-seconds', '30', '--cpu-localization']
           try:
-              runpy.run_path('tests/vm/package_acceptance.py', run_name='__main__')
+              runpy.run_path(script, run_name='__main__')
           finally:
               primary_failure = sys.exc_info()[0] is not None
               fallback_stop_attempted, fallback_stop_failed = False, False

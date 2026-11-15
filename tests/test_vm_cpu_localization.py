@@ -185,6 +185,32 @@ class Localization(unittest.TestCase):
         with self.assertRaises(cpu._QMPError):cpu._cpus([])
         with self.assertRaises(cpu._QMPError):cpu._cpus([{'cpu-index':0,'thread-id':1},{'cpu-index':0,'thread-id':2}])
 
+    def test_exact_GRUB_template_binding_never_publishes_memory_bytes(self):
+        import hashlib
+        code=bytearray(cpu._GRUB_TEMPLATE)
+        self.assertEqual(hashlib.sha256(code).hexdigest(),cpu._GRUB_TEMPLATE_SHA)
+        for start,value in ((1,0x1000000),(8,0x3000000),(15,0x200000)):
+            code[start:start+4]=value.to_bytes(4,'little')
+        text='\n'.join(format(cpu._GRUB_BASE+i,'016x')+': '+' '.join('0x%02x'%v for v in code[i:i+8]) for i in range(0,32,8))
+        bound=cpu.parse_copy_template(text)
+        self.assertTrue(bound['matched'])
+        self.assertEqual(bound['source'],'0x3000000');self.assertEqual(bound['destination'],'0x1000000')
+        self.assertEqual(bound['size_bytes'],0x200000)
+        self.assertNotIn('bytes',bound);self.assertNotIn('raw',bound)
+        bad=cpu.parse_copy_template(text.replace('0xb8','0xcc',1))
+        self.assertFalse(bad['matched']);self.assertNotIn('source',bad);self.assertNotIn('destination',bad)
+
+    def test_copy_progress_needs_verified_code_and_keeps_direction_invariants(self):
+        template={'matched':True,'source':'0x3000000','destination':'0x1000000','size_bytes':0x200000}
+        dump='ECX=00100000 ESI=030fffff EDI=010fffff EFL=00000402\nSECRET_SENTINEL'
+        fields=cpu.parse_copy_progress(dump,template)
+        self.assertTrue(fields['available']);self.assertTrue(fields['direction_backward'])
+        self.assertEqual(fields['remaining_bytes'],0x100000)
+        self.assertTrue(fields['source_relation_matches']);self.assertTrue(fields['destination_relation_matches'])
+        self.assertNotIn('SECRET_SENTINEL',json.dumps(fields))
+        unavailable=cpu.parse_copy_progress(dump,{'matched':False})
+        self.assertFalse(unavailable['available']);self.assertNotIn('remaining_bytes',unavailable)
+
     def test_restricted_symbols_and_unreported_BIOS_paths_stay_unknown(self):
         witness={'kernel_text':{'start':'0x0','end':'0x1000'},'symbols':{'first':'0x0'}}
         self.assertFalse(cpu.locate({'pc':'0x123'},witness)['available'])

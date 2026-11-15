@@ -157,8 +157,8 @@ deadlock. This observer performs no resume, confirmation, repair or reboot.
 
 The opt-in MAC diagnostic additionally accepts `--cpu-localization` with the
 30-second failure budget. Before each protected reboot and before its lease
-starts, it records the authenticated boot UUID, kernel GNU build-id and actual
-KASLR text offset. The complete live symbol table stays in the private VM work
+starts, it records the authenticated boot UUID, live symbols and, when available,
+the kernel GNU build-id. The fixed-ELF KASLR offset requires that build-id to match. The complete live symbol table stays in the private VM work
 directory; only identity/hash/range metadata is included in
 `controller/reboot-witnesses.json`. A failed witness never authorizes reuse of an
 older map and does not change the original case criteria.
@@ -171,3 +171,20 @@ the actual CPU-memory FlatView ROM ranges. Kernel matches identify addresses in
 the preboot symbol map, not proof of the same startup instance. Unsupported or
 unavailable commands remain explicit. No pause/reset, memory dump, repair or
 late confirmation is performed; the original failure and cleanup are preserved.
+
+## Ordinary reboot control
+
+The default-off manual `ordinary_reboot_control` input reuses the diagnostic job
+for one fresh, agent-free VM. It keeps the pinned image, TCG384MiB/2CPU and final
+management/MAC configuration, commits the candidate MAC without a network reload,
+and invokes ordinary `/sbin/reboot` once. There is no package installation,
+enrollment, configuration transaction or transaction TTL. A result is explicitly
+`PASS_CONTROL_ONLY` or `FAIL_CONTROL_ONLY`; it does not override an earlier
+transaction failure or satisfy the normal release gates.
+
+For a specific fixed-image GRUB copy-stub candidate PC, the failed-VM observer can
+compare exactly32 bytes at its known RAM address with a normalized opcode
+fingerprint. Raw memory is discarded. Only a verified match exposes the three
+copy parameters and the necessary count/pointer/direction observations. A stable
+REP instruction address alone is not proof of a hang; compare copy progress and
+keep missing/unsupported observations explicit. No live memory dump is published.
