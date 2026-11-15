@@ -56,6 +56,15 @@ def parse_registers(text):
     if cs:
         fields.update(cs_selector=_hex(int(cs[1], 16), 4), cs_base=_hex(int(cs[2], 16)),
                       cs_flags=_hex(int(cs[3], 16), 8))
+    for segment in ('DS', 'ES'):
+        match = re.search(r'^\s*' + segment + r'\s*=([0-9a-fA-F]{4})\s+'
+                          r'([0-9a-fA-F]{8,16})(?:\s|$)', text, re.M)
+        if match:
+            fields[segment.lower() + '_selector'] = _hex(int(match[1], 16), 4)
+            fields[segment.lower() + '_base'] = _hex(int(match[2], 16))
+    a20 = re.search(r'\bA20=([01])(?:\s|$)', text)
+    if a20:
+        fields['a20_enabled'] = a20[1] == '1'
     halted = re.search(r'\bHLT=([01])(?:\s|$)', text)
     if halted:
         fields['halted'] = halted[1] == '1'
@@ -135,13 +144,29 @@ def parse_copy_progress(text, template):
     if flags is None:
         return {'available':False,'reason':'copy_direction_unavailable'}
     count=values['remaining_bytes'];src=int(template['source'],16);dst=int(template['destination'],16)
+    fields = parse_registers(text).get('fields', {})
+    context = {name: fields[name] for name in ('a20_enabled', 'ds_selector', 'ds_base', 'es_selector', 'es_base') if name in fields}
+    flat = (fields.get('a20_enabled') is True and all(name in fields for name in ('ds_selector','ds_base','es_selector','es_base'))
+            and _number(fields['ds_base']) == 0 and _number(fields['es_base']) == 0)
+    if fields.get('a20_enabled') is not True:
+        reason = 'A20_not_verified_enabled'
+    elif not all(name in fields for name in ('ds_selector','ds_base','es_selector','es_base')):
+        reason = 'data_segment_context_unavailable'
+    elif not flat:
+        reason = 'nonflat_data_segment_context'
+    else:
+        reason = None
     return {'available':True,'remaining_bytes':count,
             'source_pointer':hex(values['source_pointer']),'destination_pointer':hex(values['destination_pointer']),
             'direction_backward':bool(int(flags[1],16)&0x400),
             'remaining_within_initial_size':count<=template['size_bytes'],
-            'source_relation_matches':(values['source_pointer']-count+1)&0xffffffff==src,
-            'destination_relation_matches':(values['destination_pointer']-count+1)&0xffffffff==dst,
+            'address_context': context,
+            'effective_address_interpretation': 'flat_32bit_offsets_equal_physical_addresses' if flat else 'unknown',
+            'source_relation_matches': (values['source_pointer']-count+1)&0xffffffff==src if flat else None,
+            'destination_relation_matches': (values['destination_pointer']-count+1)&0xffffffff==dst if flat else None,
+            **({'address_interpretation_reason':reason} if reason else {}),
             'interpretation':'counts_and_pointers_are_observations_not_a_product_assertion'}
+
 
 
 def parse_rom_ranges(text):
@@ -425,6 +450,10 @@ def sample(directory, deadline, witness=None, *, interval_seconds=.2):
                                 and ((_number(fields.get('cs_flags')) or 0) & (1 << 22))
                                 and _number(fields.get('cs_base')) == 0
                                 and _number(fields.get('linear_pc')) == _GRUB_PC):
+                            if fields.get('a20_enabled') is not True:
+                                row['copy_progress'] = {'available':False, 'reason':'A20_not_verified_enabled',
+                                                        'effective_address_interpretation':'unknown'}
+                                continue
                             if 'GRUB_copy_code' not in report:
                                 try:
                                     report['GRUB_copy_code'] = parse_copy_template(connection.call(

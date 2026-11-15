@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'vm'))
 import cpu_localization as cpu
@@ -17,6 +17,8 @@ import cpu_localization as cpu
 REGISTERS = '''RAX=1122334455667788 RBX=SECRET_SENTINEL RCX=0000000000000000
 RIP=ffffffff81000123 RFL=00000046 [---Z-P-] CPL=0 II=0 A20=1 SMM=0 HLT=0
 CS =0010 0000000000000000 ffffffff 00af9b00 DPL=0 CS64 [-RA]
+DS =0018 0000000000000000 ffffffff 00cf9300 DPL=0 DS [-WA]
+ES =0018 0000000000000000 ffffffff 00cf9300 DPL=0 DS [-WA]
 CR0=80050033 CR2=1122334455667788 CR3=0000000002e0a000 CR4=000006f0
 EFER=0000000000000d01
 '''
@@ -94,6 +96,11 @@ class Localization(unittest.TestCase):
         registers=cpu.parse_registers(REGISTERS)
         self.assertTrue(registers['complete'])
         self.assertEqual(registers['fields']['mode'],'long64')
+        self.assertTrue(registers['fields']['a20_enabled'])
+        self.assertEqual(registers['fields']['ds_selector'],'0x0018')
+        self.assertEqual(registers['fields']['ds_base'],'0x0000000000000000')
+        self.assertEqual(registers['fields']['es_selector'],'0x0018')
+        self.assertEqual(registers['fields']['es_base'],'0x0000000000000000')
         self.assertNotIn('rax',registers['fields']);self.assertNotIn('cr2',registers['fields'])
         result=cpu.locate(registers['fields'],WITNESS)
         self.assertEqual(result['nearest_symbol'],'native_restart')
@@ -202,14 +209,79 @@ class Localization(unittest.TestCase):
 
     def test_copy_progress_needs_verified_code_and_keeps_direction_invariants(self):
         template={'matched':True,'source':'0x3000000','destination':'0x1000000','size_bytes':0x200000}
-        dump='ECX=00100000 ESI=030fffff EDI=010fffff EFL=00000402\nSECRET_SENTINEL'
+        dump=('ECX=00100000 ESI=030fffff EDI=010fffff EFL=00000402 A20=1\n'
+              'DS =0010 00000000 ffffffff 00cf9300\nES =0010 00000000 ffffffff 00cf9300\nSECRET_SENTINEL')
         fields=cpu.parse_copy_progress(dump,template)
         self.assertTrue(fields['available']);self.assertTrue(fields['direction_backward'])
         self.assertEqual(fields['remaining_bytes'],0x100000)
         self.assertTrue(fields['source_relation_matches']);self.assertTrue(fields['destination_relation_matches'])
+        self.assertEqual(fields['effective_address_interpretation'],'flat_32bit_offsets_equal_physical_addresses')
         self.assertNotIn('SECRET_SENTINEL',json.dumps(fields))
         unavailable=cpu.parse_copy_progress(dump,{'matched':False})
         self.assertFalse(unavailable['available']);self.assertNotIn('remaining_bytes',unavailable)
+
+    def test_copy_addresses_are_unknown_without_A20_and_flat_segment_context(self):
+        template={'matched':True,'source':'0x3000000','destination':'0x1000000','size_bytes':0x200000}
+        dump=('ECX=00100000 ESI=030fffff EDI=010fffff EFL=00000402 A20=1\n'
+              'DS =0010 00000000 ffffffff 00cf9300\nES =0010 00000000 ffffffff 00cf9300\n')
+        for changed in (dump.replace('A20=1','A20=0'),dump.replace(' A20=1',''),
+                        dump.replace('DS =0010 00000000','DS =0010 00010000'),
+                        dump.replace('ES =0010 00000000 ffffffff 00cf9300\n','')):
+            with self.subTest(context=changed):
+                result=cpu.parse_copy_progress(changed,template)
+                self.assertTrue(result['available'])
+                self.assertEqual(result['remaining_bytes'],0x100000)
+                self.assertEqual(result['effective_address_interpretation'],'unknown')
+                self.assertIsNone(result['source_relation_matches'])
+                self.assertIsNone(result['destination_relation_matches'])
+
+    def test_original_CPU_sample_path_reads_only_fixed32B_under_strict_gate(self):
+        dump=('ECX=00100000 ESI=030fffff EDI=010fffff\n'
+              'EIP=0293c01e EFL=00000402 CPL=0 A20=1 HLT=0\n'
+              'CS =0008 00000000 ffffffff 00cf9b00\n'
+              'DS =0010 00000000 ffffffff 00cf9300\nES =0010 00000000 ffffffff 00cf9300\n'
+              'CR0=00000011 CR3=00000000 CR4=00000000 EFER=0000000000000000\n')
+        code=bytearray(cpu._GRUB_TEMPLATE)
+        for start,value in ((1,0x1000000),(8,0x3000000),(15,0x200000)):
+            code[start:start+4]=value.to_bytes(4,'little')
+        code_dump='\n'.join(format(cpu._GRUB_BASE+i,'016x')+': '+' '.join('0x%02x'%v for v in code[i:i+8]) for i in range(0,32,8))
+        variants=[('matched',dump,False,code_dump,True),
+                  ('A20-off',dump.replace('A20=1','A20=0'),False,code_dump,False),
+                  ('A20-missing',dump.replace(' A20=1',''),False,code_dump,False),
+                  ('paging',dump.replace('CR0=00000011','CR0=80000011'),False,code_dump,False),
+                  ('CS-base',dump.replace('CS =0008 00000000','CS =0008 00010000'),False,code_dump,False),
+                  ('not-32bit',dump.replace('00cf9b00','000f9b00'),False,code_dump,False),
+                  ('wrong-CPU',dump,True,code_dump,False),
+                  ('wrong-code',dump,False,code_dump.replace('0xb8','0xcc',1),True)]
+        for name,body,wrong_cpu,memory,read_expected in variants:
+            with self.subTest(gate=name):
+                connection=MagicMock()
+                connection.__enter__.return_value=connection
+                connection.__exit__.return_value=False
+                commands=[]
+                def call(command,arguments=None):
+                    commands.append((command,arguments))
+                    if command=='query-cpus-fast':return [{'cpu-index':0,'thread-id':100}]
+                    operation=arguments['command-line']
+                    if operation=='info mtree -f':return ROM
+                    if operation=='info roms':return 'name="bios-256k.bin"'
+                    if operation==cpu._GRUB_READ:return memory
+                    self.assertEqual(operation,'info registers')
+                    return 'CPU#'+('7' if wrong_cpu else '0')+'\n'+body
+                connection.call.side_effect=call
+                with patch.object(cpu,'_Connection',return_value=connection):
+                    result=cpu.sample(self.vm,time.monotonic()+.5,interval_seconds=0)
+                reads=[args['command-line'] for command,args in commands if command=='human-monitor-command' and args['command-line'].startswith('xp ')]
+                self.assertEqual(reads,[cpu._GRUB_READ] if read_expected else [])
+                if name=='matched':
+                    self.assertTrue(result['GRUB_copy_code']['matched'])
+                    self.assertEqual(result['samples'][0]['cpus'][0]['copy_progress']['address_context']['a20_enabled'],True)
+                if name=='wrong-code':
+                    self.assertFalse(result['GRUB_copy_code']['matched'])
+                    self.assertNotIn('source',result['GRUB_copy_code'])
+                    self.assertNotIn('copy_progress',result['samples'][0]['cpus'][0])
+                self.assertNotIn('0xb8',json.dumps(result))
+                self.assertNotIn('memory_bytes',json.dumps(result))
 
     def test_restricted_symbols_and_unreported_BIOS_paths_stay_unknown(self):
         witness={'kernel_text':{'start':'0x0','end':'0x1000'},'symbols':{'first':'0x0'}}

@@ -185,6 +185,9 @@ transaction failure or satisfy the normal release gates.
 For a specific fixed-image GRUB copy-stub candidate PC, the failed-VM observer can
 compare exactly32 bytes at its known RAM address with a normalized opcode
 fingerprint. Raw memory is discarded. Only a verified match exposes the three
-copy parameters and the necessary count/pointer/direction observations. A stable
-REP instruction address alone is not proof of a hang; compare copy progress and
-keep missing/unsupported observations explicit. No live memory dump is published.
+copy parameters and the necessary count/pointer/direction observations. Binding
+the physical code to the executing PC also requires enabled A20. Copy-address
+relations require observed flat DS/ES bases; missing or non-flat context stays
+explicitly unknown. A stable REP instruction address alone is not proof of a
+hang; compare copy progress and keep missing/unsupported observations explicit.
+No live memory dump is published.
