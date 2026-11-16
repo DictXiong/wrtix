@@ -189,6 +189,9 @@ an interactive question, including in scripts. The underlying `openwrt-deploy
 deploy` and `openwrt-rebuild test` behave the same way. Remote preview reports
 the proposed identity change without applying it. Missing or invalid registration
 still prevents ordinary deployment; `--init` remains only for first enrollment.
+`prepare-packages` also warns when selecting a different registered ID, but only
+prepares the declared packages; it leaves the identity and configuration unchanged.
+The later configuration transaction performs the ID change under rollback protection.
 
 The transaction snapshots the old identity and resource ownership. Confirmation
 accepts only the new identity and candidate configuration. Failure or rollback

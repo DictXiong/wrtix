@@ -1292,6 +1292,7 @@ def main(argv=None):
             with device_progress.stage("Checking agent identity"):
                 contract = transport.agent_preflight(allow_initialize=args.initialize or args.command == "prepare-packages",
                                                      allow_identity_change=True)
+            warn_identity_change(transport, contract["identity"], node, preview=args.command in ("plan", "verify"))
             if args.command == "prepare-packages":
                 with device_progress.stage("Preparing required packages (outside configuration rollback)"):
                     result = transport.call("package-prepare", data=canonical(compiled["packages"]))
@@ -1301,7 +1302,6 @@ def main(argv=None):
                 continue
             initialize = args.initialize and not contract["identity"].get("device_id")
             identity_change = contract["identity"]["device_id"] not in ("", node)
-            warn_identity_change(transport, contract["identity"], node, preview=args.command in ("plan", "verify"))
             if compiled["packages"]:
                 # Package installs/removals are deliberately separate from rollbackable config.
                 with device_progress.stage("Checking installed packages"):

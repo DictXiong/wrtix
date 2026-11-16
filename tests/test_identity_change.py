@@ -8,6 +8,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -113,6 +114,25 @@ class IdentityChangeTests(unittest.TestCase):
         self.assertEqual(noop["state"], "noop")
         self.assertEqual(warning, "")
         self.assertNotIn("stage", self.calls)
+
+    def test_package_preparation_warns_before_action_without_changing_identity(self):
+        before = self.seed()
+        # No package installation is needed, but preparation still runs the real
+        # agent's separate lock/fence path using a synthetic package manager.
+        self.target.put("package-tools/opkg", b"#!/bin/sh\nexit 0\n", 0o700)
+        self.target.engine_env["PATH"] = str(self.target.root / "package-tools") + os.pathsep + self.target.engine_env["PATH"]
+        observed = []
+        def action(name):
+            if name == "package-prepare":
+                observed.append(sys.stderr.getvalue())
+        self.hook = action
+        result, warning = self.controller("prepare-packages")
+        self.assertEqual(result["state"], "packages-ready")
+        self.assertEqual(observed, [warning])
+        self.assertIn("fixture -> next [target root@router.example:22]", warning)
+        self.assertFalse(set(self.calls) & {"stage", "apply", "confirm", "rollback"})
+        for path, data in before.items():
+            self.assertEqual((self.target.root / path).read_bytes(), data)
 
     def test_remote_preview_diff_and_verify_do_not_write(self):
         before = self.seed()
