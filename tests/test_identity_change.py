@@ -29,6 +29,8 @@ class IdentityChangeTests(unittest.TestCase):
         self.target = test_target.TargetTransaction(methodName="runTest")
         self.target.setUp()
         self.addCleanup(self.target.doCleanups)
+        self.enterContext(patch.dict(os.environ, {
+            "XDG_STATE_HOME": str(self.target.root / "controller-state")}))
         self.calls, self.hook = [], None
         owner = self
 
