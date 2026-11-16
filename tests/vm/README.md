@@ -5,6 +5,17 @@ its SHA-256. `machine.py` verifies that compressed image before preparing a
 private copy. The upstream checksum is published alongside the image:
 <https://downloads.openwrt.org/releases/25.12.0/targets/x86/64/sha256sums>.
 
+The fixture extracts `/boot/vmlinuz` read-only from that image's first partition,
+checks its pinned size, SHA-256 and Linux boot header, and checks it again before
+launch. QEMU loads this exact kernel directly with the official normal GRUB
+entry's equivalent root and console arguments, using the same prepared root disk
+and no initrd. Guest-initiated reboots remain real reboots; CPU, memory, network,
+authentication, boot UUID, MAC, confirmation and rollback checks are unchanged.
+This test-only workaround bypasses the GRUB memory-copy stage observed during
+a failed emulated reboot. It does not cover the GRUB loading chain or memory layout,
+establish a unique GRUB/QEMU cause, or fix product runtime behavior. Earlier
+disk-boot failures remain failures.
+
 The harness requires Python 3, QEMU x86_64, `debugfs`, OpenSSH and network
 access. KVM is preferred; QEMU falls back to emulation when unavailable.
 Use `--accel kvm` or `--accel tcg` to reproduce a specific runner mode; both run

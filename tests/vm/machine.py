@@ -22,6 +22,36 @@ def run(argv, **kwargs):
     return subprocess.run(argv, check=True, **kwargs)
 
 
+def validate_kernel(kernel):
+    pin = PIN["kernel"]
+    if kernel.is_symlink() or not kernel.is_file():
+        raise RuntimeError("pinned official kernel is unavailable")
+    if kernel.stat().st_size != pin["size_bytes"]:
+        raise RuntimeError("pinned official kernel mismatch")
+    data = kernel.read_bytes()
+    if (len(data) != pin["size_bytes"] or hashlib.sha256(data).hexdigest() != pin["sha256"]
+            or data[0x202:0x206] != b"HdrS"):
+        raise RuntimeError("pinned official kernel mismatch")
+
+
+def extract_kernel(directory, disk):
+    boot = directory / "boot.ext4"
+    kernel = directory / "vmlinuz"
+    try:
+        with disk.open("rb") as source:
+            mbr = source.read(512)
+            offset, sectors = struct.unpack_from("<II", mbr, 446 + 8)
+            if mbr[446 + 4] != 0x83 or offset == 0 or sectors == 0:
+                raise RuntimeError("unexpected official boot partition layout")
+            source.seek(offset * 512)
+            boot.write_bytes(source.read(sectors * 512))
+        with kernel.open("xb") as output, (directory / "kernel-extract.log").open("wb") as log:
+            run(["debugfs", "-R", "cat /boot/vmlinuz", str(boot)], stdout=output, stderr=log)
+        validate_kernel(kernel)
+    finally:
+        boot.unlink(missing_ok=True)
+
+
 def prepare(directory, image):
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if any(directory.iterdir()):
@@ -32,6 +62,7 @@ def prepare(directory, image):
     disk = directory / "disk.img"
     with gzip.open(image, "rb") as src, disk.open("wb") as dst:
         shutil.copyfileobj(src, dst)
+    extract_kernel(directory, disk)
     key = directory / "identity"
     run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)])
     with disk.open("rb") as f:
@@ -81,6 +112,8 @@ def start(directory, port, alternate_port, *, accel=None):
     checked(directory)
     if (directory / "machine.json").exists():
         raise RuntimeError("VM already started; stop it first")
+    kernel = directory / "vmlinuz"
+    validate_kernel(kernel)
     monitor = directory / "monitor.sock"
     monitor.unlink(missing_ok=True)
     accel = accel or ("kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg")
@@ -94,6 +127,7 @@ def start(directory, port, alternate_port, *, accel=None):
             "-qmp", f"unix:{monitor},server=on,wait=off", "-no-reboot"]
     # Reboots are required by the acceptance suite; QEMU must survive them.
     args.remove("-no-reboot")
+    args += ["-kernel", str(kernel), "-append", PIN["kernel"]["cmdline"]]
     with (directory / "qemu.log").open("ab") as log:
         process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=log, start_new_session=True)
@@ -102,7 +136,9 @@ def start(directory, port, alternate_port, *, accel=None):
         raise RuntimeError("QEMU exited; see qemu.log")
     ticks = Path(f"/proc/{process.pid}/stat").read_text().split()[21]
     info = {"pid": process.pid, "start_ticks": ticks, "port": port,
-            "alternate_port": alternate_port, "accel": accel, "image_sha256": PIN["sha256"]}
+            "alternate_port": alternate_port, "accel": accel, "image_sha256": PIN["sha256"],
+            "boot_method": "direct-kernel", "kernel_sha256": PIN["kernel"]["sha256"],
+            "kernel_cmdline": PIN["kernel"]["cmdline"]}
     (directory / "machine.json").write_text(json.dumps(info))
     print(json.dumps(info))
 
